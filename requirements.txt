@@ -1,0 +1,12 @@
+# === DEPENDENCIAS PRINCIPALES ===
+anthropic>=0.40.0         # SDK de Claude - el cerebro de los agentes
+rich>=13.0.0              # Interfaz bonita en terminal
+python-dotenv>=1.0.0      # Carga variables de entorno desde .env
+
+# === OPCIONALES (entrada por voz) ===
+# En Desktop (Windows/Mac/Linux):
+#   pip install SpeechRecognition pyaudio
+#
+# En Android (Termux) con Whisper API:
+#   pip install openai
+#   pkg install termux-api
