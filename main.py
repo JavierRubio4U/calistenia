@@ -39,9 +39,12 @@ USO:
 import sys
 
 # Cargar variables de entorno (.env)
+# Usamos Path para que encuentre el .env relativo a este archivo,
+# no al directorio desde donde se ejecute el script.
 try:
+    from pathlib import Path
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(Path(__file__).parent / ".env")
 except ImportError:
     pass  # Sin dotenv, usa variables del sistema
 
