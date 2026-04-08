@@ -1,20 +1,49 @@
-# Reglas del Proyecto: Calistenia Coach (Arquitectura Agéntica Didáctica)
+# Calistenia Coach — Reglas para el IDE
 
-## Identidad
-Eres un asistente experto en Python y el SDK `google-genai`. Este proyecto es una aplicación DIDÁCTICA para aprender "Programación Agéntica de Cero", sin frameworks externos como Langchain o CrewAI. Todo debe ser explícito, claro y seguir el principio de "Single Responsibility" aplicado a IA.
+> Para documentación completa con diagramas y arquitectura: ver **README.md**
 
-## Arquitectura de Agentes
-El sistema se compone de 3 agentes que **solo** se comunican a través de **SQLite** (Base de Datos Local), simulando memoria compartida asíncrona.
-1. **Agente Receptor**: Convierte reportes (Texto Libre o Audio Crudo local a través de la Capacidad Multimodal V2) en datos JSON estructurados usando Schemas `Pydantic`. Su salida es insertada en la DB.
-2. **Agente Entrenador**: Genera la rutina del día. Solo se alimenta del historial en la DB y las instrucciones del Sistema. No recuerda "conversaciones pasadas" sino estados de Base de Datos.
-3. **Agente Analista**: Tarea asíncrona (simulada) que analiza progreso intermensual comparando las filas de la DB, y deja anotaciones nuevas a las que accederá el Agente Entrenador.
+## Qué es este proyecto
+App de entrenamiento personal adaptativo construida como ejemplo DIDÁCTICO
+de programación agéntica. Sin frameworks mágicos (no LangChain, no CrewAI).
+Todo explícito y con responsabilidad única por agente.
 
-## Reglas de Implementación
-- **No uses SDKs Mágicos**: Todo se diseña utilizando librerías estándar o de bajo nivel.
-- **Tipado Estricto (Pydantic)**: Todo lo que el LLM devuelva que necesite ser procesado como código DEBE instanciarse vía `Pydantic` a través del `response_schema` del cliente de `google-genai`. Nunca uses expresiones regulares para extraer datos JSON del output.
-- **Multimodalidad Nativa**: Al soportar voz, usarás Gemini Flash para poder adjuntar directamente un archivo (`file_path_or_bytes`) sin necesidad de llamar a Whisper para transcribir texto antes. Deja que Gemini oiga el tono y el énfasis real.
-- **Idioma**: La documentación y el código en general (comentarios, variables coreánicas) en español, pero variables estándar de Python (funciones, clases) en inglés para mantener un repo estándar y limpio.
-- **Punto de Entrada**: Todo se orquesta de manera procedimental/OOP sencilla a través de `main.py` y el cliente CLI con `rich`.
+## Stack actual
+- **LLM:** Google Gemini 2.5 Flash via `google-genai`  ← único modelo válido para esta cuenta
+- **DB:** Supabase (PostgreSQL) — migrado desde SQLite, NO volver a SQLite
+- **Web:** Streamlit (`app.py`) — desplegado en Google Cloud Run
+- **CLI:** `main.py` — para uso local / Termux Android
+- **Deploy:** `deploy_cloud.ps1` (Windows PowerShell) + `Dockerfile`
 
-## Manejo de Claves API
-Usa siempre variables de entorno y carga `dotenv`. El cliente por defecto de Google (`gemini_client = genai.Client()`) asume `GEMINI_API_KEY`.
+## Archivos clave (leer en este orden)
+1. `agents/base.py` — el bucle agéntico explicado paso a paso
+2. `database.py` — tools que usan los agentes, usa Supabase SDK
+3. `agents/orchestrator.py` — coordinación determinista entre los 3 agentes
+4. `agents/receptor.py` / `trainer.py` / `analyst.py` — agentes especializados
+
+## Los 3 Agentes
+| Agente | Modelo | Tools principales | Misión |
+|---|---|---|---|
+| Receptor | gemini-2.5-flash | save_session | Parsea voz/texto → datos DB |
+| Entrenador | gemini-2.5-flash | get_*_sessions, save_planned_workout | Rutina 40min impacto cero |
+| Analista | gemini-2.5-flash | get_all_sessions, save_recommendation | Detecta progreso, recomienda |
+
+## Reglas técnicas críticas
+1. **Tools = funciones Python** con type hints + docstring — Gemini extrae el schema automáticamente
+2. **load_dotenv() siempre con path:** `load_dotenv(Path(__file__).parent / ".env")`
+3. **Modelo:** `gemini-2.5-flash` — gemini-1.5-flash y gemini-2.0-flash no disponibles
+4. **Audio MIME type:** usar `audio_file.type` dinámicamente, NUNCA hardcodear `audio/wav`
+5. **Supabase:** variables SUPABASE_URL y SUPABASE_KEY — el cliente se inicializa en database.py
+6. **.env nunca en git** — en Cloud Run se pasan con `--set-env-vars`
+
+## Perfil del usuario (Javi)
+- 56 años, 135 kg, fascitis plantar crónica (evitar impacto en planta del pie)
+- Objetivo: perder peso, colgarse 10s en barra, mejorar agarre
+- Entorno: gimnasio al aire libre con barras y bancos
+- Accede desde Pixel 10a (Android) → la web debe funcionar bien en móvil
+
+## Variables de entorno requeridas
+```
+GEMINI_API_KEY=AIza...      # aistudio.google.com/apikey
+SUPABASE_URL=https://...    # Supabase dashboard → Settings → API
+SUPABASE_KEY=eyJ...         # Supabase dashboard → Settings → API
+```
