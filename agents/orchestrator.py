@@ -1,112 +1,69 @@
 """
 orchestrator.py - El Orquestador
 
-╔══════════════════════════════════════════════════════════════════╗
-║  PATRONES DE ORQUESTACIÓN EN SISTEMAS MULTI-AGENTE             ║
-╠══════════════════════════════════════════════════════════════════╣
-║                                                                  ║
-║  Hay dos formas principales de coordinar agentes:               ║
-║                                                                  ║
-║  1. ORQUESTACIÓN DETERMINISTA (la que usamos aquí)              ║
-║     → Lógica Python decide quién se ejecuta y cuándo            ║
-║     → Predecible, fácil de debuggear                            ║
-║     → Ideal cuando el flujo es conocido                         ║
-║                                                                  ║
-║  2. ORQUESTACIÓN CON LLM                                        ║
-║     → Otro LLM decide a qué agente llamar                       ║
-║     → Más flexible (entiende lenguaje natural)                  ║
-║     → Útil cuando el flujo es ambiguo                           ║
-║     → Más caro y menos predecible                               ║
-║                                                                  ║
-║  Para este proyecto usamos la opción 1 porque el flujo es       ║
-║  claro: o pides rutina, o reportas sesión, o ves progreso.     ║
-║  No necesitamos un LLM para decidir eso.                       ║
-║                                                                  ║
-║  EN EL FUTURO: si quisieras un chatbot que entienda "oye,      ║
-║  ayer fui al parque e hice unas cuantas cosas, ah y dame       ║
-║  la rutina de mañana", necesitarías orquestación con LLM.      ║
-╚══════════════════════════════════════════════════════════════════╝
+Coordina el flujo entre los agentes: Receptor, Entrenador y Analista.
+Implementa una orquestación determinista (basada en lógica Python).
 """
 
+from typing import Union, List, Tuple, Optional
 from .receptor import create_receptor_agent
 from .trainer import create_trainer_agent
 from .analyst import create_analyst_agent
 from database import get_all_sessions
 
-
 class Orchestrator:
     """
-    Coordina los 3 agentes del sistema.
-
-    Flujos principales:
-      get_workout_plan()  → Entrenador genera rutina
-      report_session()    → Receptor guarda datos → Analista evalúa (si hay datos)
-      analyze_progress()  → Analista hace informe completo
+    Coordina los agentes del sistema Calistenia Coach.
     """
 
     def __init__(self):
-        # Creamos los agentes al iniciar.
-        # Cada uno tiene su propio system prompt, tools y modelo.
+        # Inicialización de agentes especializados
         self.receptor = create_receptor_agent()
         self.trainer = create_trainer_agent()
         self.analyst = create_analyst_agent()
 
-    def get_workout_plan(self):
+    def get_workout_plan(self) -> str:
         """
-        Flujo: Pedir rutina de hoy
-
-        Entrenador → [consulta DB] → [razona] → [genera rutina] → [guarda plan]
-
-        El Entrenador automáticamente consultará el historial, la frecuencia
-        semanal, y las recomendaciones del Analista antes de diseñar la rutina.
-        No necesitamos decirle explícitamente qué hacer — su system prompt
-        le da la autonomía para decidir.
+        Flujo: Generar rutina del día.
+        El Entrenador consulta autónomamente el historial en la DB.
         """
         return self.trainer.run(
-            "Diseña la rutina de entrenamiento de calistenia para hoy. "
-            "Consulta mi historial y adapta la rutina."
+            "Genera una rutina de calistenia de 40 minutos adaptada a mi historial actual. "
+            "Usa tus herramientas para evaluar mi progreso y frecuencia."
         )
 
-    def report_session(self, report_text):
+    def report_session(self, report_input: Union[str, List]) -> Tuple[str, Optional[str]]:
         """
-        Flujo: Reportar sesión de entrenamiento
-
-        Paso 1: Receptor → parsea texto → guarda en DB
-        Paso 2: Si hay >= 3 sesiones → Analista evalúa → guarda recomendaciones
-
-        Este flujo muestra ENCADENAMIENTO DE AGENTES:
-        La salida del Receptor (datos guardados) habilita al Analista
-        (que necesita datos para analizar).
+        Flujo: Registrar sesión.
+        Acepta texto o contenido multimodal (ej: audio cargado).
+        
+        1. El Receptor parsea y guarda en la DB.
+        2. El Analista se activa si hay datos suficientes para actualizar recomendaciones.
         """
-        # Paso 1: Receptor procesa el reporte
-        receptor_response = self.receptor.run(report_text)
+        # Paso 1: Procesar el reporte (Receptor)
+        receptor_response = self.receptor.run(report_input)
 
-        # Paso 2: ¿Suficientes datos para análisis?
+        # Paso 2: Ejecutar analista si hay historial suficiente (>= 3 sesiones)
         sessions = get_all_sessions()
         analyst_response = None
 
         if len(sessions) >= 3:
-            # El Analista se activa solo cuando hay datos suficientes.
-            # Esto evita análisis vacíos y ahorra llamadas API.
             analyst_response = self.analyst.run(
-                "Analiza el progreso del usuario con los datos disponibles "
-                "y genera recomendaciones actualizadas."
+                "Analiza las últimas sesiones guardadas y genera recomendaciones "
+                "técnicas nuevas para mis próximos entrenamientos."
             )
 
         return receptor_response, analyst_response
 
-    def analyze_progress(self):
+    def analyze_progress(self) -> str:
         """
-        Flujo: Ver progreso (bajo demanda)
-
-        Analista → [lee todo el historial] → [detecta patrones] → [recomienda]
+        Flujo: Análisis de progreso bajo demanda.
         """
         sessions = get_all_sessions()
         if not sessions:
-            return "No hay sesiones registradas todavía. Reporta tu primera sesión."
+            return "Aún no hay sesiones registradas. ¡Empieza a entrenar hoy!"
 
         return self.analyst.run(
-            "Haz un análisis COMPLETO del progreso del usuario. "
-            "Revisa todas las sesiones, identifica tendencias y genera "
-            "recomendaciones detalladas."
+            "Haz un análisis pormenorizado de mi evolución. Compara volumen, "
+            "intensidad y fatiga. Dame un reporte de progreso completo."
         )

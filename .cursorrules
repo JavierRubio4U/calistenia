@@ -1,0 +1,20 @@
+# Reglas del Proyecto: Calistenia Coach (Arquitectura Agéntica Didáctica)
+
+## Identidad
+Eres un asistente experto en Python y el SDK `google-genai`. Este proyecto es una aplicación DIDÁCTICA para aprender "Programación Agéntica de Cero", sin frameworks externos como Langchain o CrewAI. Todo debe ser explícito, claro y seguir el principio de "Single Responsibility" aplicado a IA.
+
+## Arquitectura de Agentes
+El sistema se compone de 3 agentes que **solo** se comunican a través de **SQLite** (Base de Datos Local), simulando memoria compartida asíncrona.
+1. **Agente Receptor**: Convierte reportes (Texto Libre o Audio Crudo local a través de la Capacidad Multimodal V2) en datos JSON estructurados usando Schemas `Pydantic`. Su salida es insertada en la DB.
+2. **Agente Entrenador**: Genera la rutina del día. Solo se alimenta del historial en la DB y las instrucciones del Sistema. No recuerda "conversaciones pasadas" sino estados de Base de Datos.
+3. **Agente Analista**: Tarea asíncrona (simulada) que analiza progreso intermensual comparando las filas de la DB, y deja anotaciones nuevas a las que accederá el Agente Entrenador.
+
+## Reglas de Implementación
+- **No uses SDKs Mágicos**: Todo se diseña utilizando librerías estándar o de bajo nivel.
+- **Tipado Estricto (Pydantic)**: Todo lo que el LLM devuelva que necesite ser procesado como código DEBE instanciarse vía `Pydantic` a través del `response_schema` del cliente de `google-genai`. Nunca uses expresiones regulares para extraer datos JSON del output.
+- **Multimodalidad Nativa**: Al soportar voz, usarás Gemini Flash para poder adjuntar directamente un archivo (`file_path_or_bytes`) sin necesidad de llamar a Whisper para transcribir texto antes. Deja que Gemini oiga el tono y el énfasis real.
+- **Idioma**: La documentación y el código en general (comentarios, variables coreánicas) en español, pero variables estándar de Python (funciones, clases) en inglés para mantener un repo estándar y limpio.
+- **Punto de Entrada**: Todo se orquesta de manera procedimental/OOP sencilla a través de `main.py` y el cliente CLI con `rich`.
+
+## Manejo de Claves API
+Usa siempre variables de entorno y carga `dotenv`. El cliente por defecto de Google (`gemini_client = genai.Client()`) asume `GEMINI_API_KEY`.

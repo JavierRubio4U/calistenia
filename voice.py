@@ -1,157 +1,63 @@
 """
-voice.py - Módulo de entrada por voz (OPCIONAL)
+voice.py - Módulo de grabación de audio (Desktop)
 
-Este módulo detecta automáticamente tu entorno y usa el método
-de grabación + transcripción adecuado:
-
-  Android (Termux):
-    - Graba con termux-microphone-record (necesitas: pkg install termux-api)
-    - Transcribe con OpenAI Whisper API (necesitas: pip install openai)
-
-  Desktop (Windows/Mac/Linux):
-    - Graba con SpeechRecognition + PyAudio
-    - Transcribe con Google Speech API (gratis, sin API key)
-
-  Si nada está disponible:
-    - Usa el teclado de Android con dictado por voz (el icono del micro)
-    - O simplemente escribe el texto a mano
-
-NOTA PARA ANDROID: La forma MÁS FÁCIL de usar voz es el teclado de
-Google (Gboard). Pulsa el icono del micrófono y dicta. El texto aparece
-en la terminal directamente. No necesitas instalar nada extra.
+Este módulo graba el audio del micrófono directamente a un archivo .wav 
+temporal para enviarlo al Agente Receptor (Gemini Multimodal).
 """
 
 import os
-import shutil
-import subprocess
 import tempfile
-
-
-def is_termux():
-    """Detecta si estamos en Termux (Android)."""
-    return shutil.which("termux-microphone-record") is not None
-
-
-def is_desktop_voice_available():
-    """Detecta si SpeechRecognition está disponible (Desktop)."""
-    try:
-        import speech_recognition  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
+import sounddevice as sd
+from scipy.io import wavfile
+import numpy as np
 
 def get_voice_mode():
-    """Determina qué modo de voz está disponible.
-
-    Returns:
-        "termux" | "desktop" | None
-    """
-    if is_termux():
-        return "termux"
-    if is_desktop_voice_available():
-        return "desktop"
-    return None
-
-
-def record_termux(max_seconds=120):
-    """Graba audio usando Termux API.
-
-    Requiere: pkg install termux-api
-    """
-    with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as f:
-        filepath = f.name
-
-    print("🎤 Grabando... (pulsa Enter cuando termines)")
+    """Para este proyecto didáctico, usamos 'native' si sounddevice está disponible."""
     try:
-        # Inicia grabación en background
-        subprocess.Popen([
-            "termux-microphone-record",
-            "-f", filepath,
-            "-l", str(max_seconds),
-        ])
-        input()  # Espera a que el usuario pulse Enter
-        subprocess.run(["termux-microphone-record", "-q"], check=True)
+        sd.query_devices()
+        return "native"
+    except Exception:
+        return None
+
+def record_audio(duration_max=120, fs=16000):
+    """
+    Graba audio del micrófono y lo guarda en un archivo temporal .wav.
+    
+    Args:
+        duration_max: Duración máxima en segundos.
+        fs: Frecuencia de muestreo (16kHz es ideal para voz).
+    
+    Returns:
+        Ruta al archivo temporal .wav.
+    """
+    print("\n🎤 [SISTEMA] Grabando... (Pulsa Ctrl+C para detener y procesar)")
+    
+    # Grabamos en un buffer circular o simplemente capturamos
+    # Para simplicidad didáctica, capturamos hasta que el usuario corte o pase el tiempo
+    try:
+        # Grabación asíncrona
+        recording = sd.rec(int(duration_max * fs), samplerate=fs, channels=1, dtype='int16')
+        
+        # Esperamos a que el usuario quiera parar (Enter)
+        input("🎤 [SISTEMA] Grabando. Presiona ENTER para finalizar la grabación...")
+        sd.stop()
+        
+        # Recortamos el silencio del final si paramos antes de duration_max
+        # (Esto es una simplificación, en producción usaríamos VAD)
+        # Por ahora, guardamos lo capturado.
+        
+        temp_dir = tempfile.gettempdir()
+        file_path = os.path.join(temp_dir, "calistenia_report.wav")
+        
+        # Guardar con scipy
+        wavfile.write(file_path, fs, recording)
+        
+        return file_path
+
     except KeyboardInterrupt:
-        subprocess.run(["termux-microphone-record", "-q"], check=True)
-
-    return filepath
-
-
-def transcribe_with_whisper_api(filepath):
-    """Transcribe audio usando OpenAI Whisper API.
-
-    Requiere: pip install openai + OPENAI_API_KEY en .env
-    """
-    try:
-        from openai import OpenAI
-    except ImportError:
-        print("Para transcripción con Whisper: pip install openai")
+        sd.stop()
+        print("\n🎤 [SISTEMA] Grabación detenida.")
         return None
-
-    try:
-        client = OpenAI()
-        with open(filepath, "rb") as f:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language="es"
-            )
-        return transcript.text
     except Exception as e:
-        print(f"Error transcribiendo: {e}")
+        print(f"\n❌ [ERROR] Error al grabar: {e}")
         return None
-
-
-def record_desktop():
-    """Graba y transcribe usando SpeechRecognition (Desktop).
-
-    Requiere: pip install SpeechRecognition pyaudio
-    """
-    import speech_recognition as sr
-    r = sr.Recognizer()
-
-    try:
-        with sr.Microphone() as source:
-            print("🎤 Ajustando ruido de fondo...")
-            r.adjust_for_ambient_noise(source, duration=1)
-            print("🎤 Habla ahora... (máx 2 minutos)")
-            audio = r.listen(source, timeout=30, phrase_time_limit=120)
-            print("🎤 Procesando audio...")
-    except Exception as e:
-        print(f"Error con el micrófono: {e}")
-        return None
-
-    try:
-        return r.recognize_google(audio, language="es-ES")
-    except sr.UnknownValueError:
-        print("No se pudo entender el audio. Intenta de nuevo.")
-        return None
-    except sr.RequestError as e:
-        print(f"Error con el servicio de reconocimiento: {e}")
-        return None
-
-
-def record_and_transcribe():
-    """Función principal: graba y transcribe según el entorno.
-
-    Returns:
-        str con el texto transcrito, o None si falla
-    """
-    mode = get_voice_mode()
-
-    if mode == "termux":
-        filepath = record_termux()
-        if filepath:
-            text = transcribe_with_whisper_api(filepath)
-            try:
-                os.unlink(filepath)
-            except OSError:
-                pass
-            return text
-
-    elif mode == "desktop":
-        return record_desktop()
-
-    print("Voz no disponible. Usa el teclado con dictado o escribe el texto.")
-    return None
