@@ -41,7 +41,14 @@ class Agent:
         self.response_schema = response_schema
         
         # Cliente oficial de Google
-        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        # Prioridad: Streamlit Secrets (cloud) → .env (local)
+        api_key = os.getenv("GEMINI_API_KEY")
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("GEMINI_API_KEY", api_key)
+        except Exception:
+            pass
+        self.client = genai.Client(api_key=api_key)
 
     def run(self, user_input: Union[str, List[Union[str, bytes]]], context: str = "") -> Any:
         """
