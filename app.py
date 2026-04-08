@@ -45,12 +45,10 @@ if profile:
     st.title(f"💪 Hola, {profile['name']}!")
     
     # Métricas de Javi
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("Edad", f"{profile['age']} años")
-    with col2:
         st.metric("Peso", f"{profile['current_weight']} kg", delta=f"{profile['current_weight']-profile['initial_weight']:.1f} kg")
-    with col3:
+    with col2:
         st.metric("Objetivo", "10s Barra")
     
     st.info(f"📍 **Estado:** {profile['injuries']}")

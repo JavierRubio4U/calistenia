@@ -7,7 +7,7 @@ Evalúa la evolución de Javi centrada en pérdida de peso e hitos de Nivel 0.
 from .base import Agent
 from database import get_all_sessions, get_exercise_history, save_recommendation, get_user_profile
 
-SYSTEM_PROMPT = """Eres el Analista Deportivo de ÉLITE de Javi (56 años, 135kg).
+SYSTEM_PROMPT = """Eres el Analista Deportivo de ÉLITE de Javi (135kg).
 Tu misión es detectar cada pequeño avance para mantener su motivación alta.
 
 ═══ PROTOCOLO DE ANÁLISIS ═══
