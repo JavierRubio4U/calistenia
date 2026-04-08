@@ -15,12 +15,28 @@ if (Test-Path ".env") {
         if ($line -match "^GEMINI_API_KEY=(.*)") { $env:GEMINI_API_KEY = $Matches[1].Trim() }
         if ($line -match "^SUPABASE_URL=(.*)") { $env:SUPABASE_URL = $Matches[1].Trim() }
         if ($line -match "^SUPABASE_KEY=(.*)") { $env:SUPABASE_KEY = $Matches[1].Trim() }
+        if ($line -match "^ALLOWED_EMAIL=(.*)") { $env:ALLOWED_EMAIL = $Matches[1].Trim() }
     }
 }
 
 if (-not $env:GEMINI_API_KEY) { $env:GEMINI_API_KEY = Read-Host "No se encontro GEMINI_API_KEY" }
 if (-not $env:SUPABASE_URL) { $env:SUPABASE_URL = Read-Host "No se encontro SUPABASE_URL" }
 if (-not $env:SUPABASE_KEY) { $env:SUPABASE_KEY = Read-Host "No se encontro SUPABASE_KEY" }
+if (-not $env:ALLOWED_EMAIL) { $env:ALLOWED_EMAIL = Read-Host "No se encontro ALLOWED_EMAIL" }
+
+# OAuth — leído desde .env (nunca hardcodear en este archivo)
+if (Test-Path ".env") {
+    foreach ($line in (Get-Content ".env")) {
+        if ($line -match "^GOOGLE_CLIENT_ID=(.*)") { $env:GOOGLE_CLIENT_ID = $Matches[1].Trim() }
+        if ($line -match "^GOOGLE_CLIENT_SECRET=(.*)") { $env:GOOGLE_CLIENT_SECRET = $Matches[1].Trim() }
+        if ($line -match "^COOKIE_SECRET=(.*)") { $env:COOKIE_SECRET = $Matches[1].Trim() }
+        if ($line -match "^OAUTH_REDIRECT_URI=(.*)") { $env:OAUTH_REDIRECT_URI = $Matches[1].Trim() }
+    }
+}
+if (-not $env:GOOGLE_CLIENT_ID) { $env:GOOGLE_CLIENT_ID = Read-Host "GOOGLE_CLIENT_ID" }
+if (-not $env:GOOGLE_CLIENT_SECRET) { $env:GOOGLE_CLIENT_SECRET = Read-Host "GOOGLE_CLIENT_SECRET" }
+if (-not $env:COOKIE_SECRET) { $env:COOKIE_SECRET = Read-Host "COOKIE_SECRET" }
+if (-not $env:OAUTH_REDIRECT_URI) { $env:OAUTH_REDIRECT_URI = Read-Host "OAUTH_REDIRECT_URI" }
 
 # ── 2. Build de la imagen en Cloud Build ──────────────────────
 Write-Host "[BUILD] Construyendo imagen en Cloud Build..." -ForegroundColor Cyan
@@ -34,7 +50,7 @@ gcloud run deploy $SERVICE_NAME `
     --platform managed `
     --region $REGION `
     --allow-unauthenticated `
-    --set-env-vars "GEMINI_API_KEY=$($env:GEMINI_API_KEY),SUPABASE_URL=$($env:SUPABASE_URL),SUPABASE_KEY=$($env:SUPABASE_KEY)" `
+    --set-env-vars "GEMINI_API_KEY=$($env:GEMINI_API_KEY),SUPABASE_URL=$($env:SUPABASE_URL),SUPABASE_KEY=$($env:SUPABASE_KEY),ALLOWED_EMAIL=$($env:ALLOWED_EMAIL),GOOGLE_CLIENT_ID=$($env:GOOGLE_CLIENT_ID),GOOGLE_CLIENT_SECRET=$($env:GOOGLE_CLIENT_SECRET),COOKIE_SECRET=$($env:COOKIE_SECRET),OAUTH_REDIRECT_URI=$($env:OAUTH_REDIRECT_URI)" `
     --timeout=600
 
 if ($LASTEXITCODE -eq 0) {
