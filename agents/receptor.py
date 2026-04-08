@@ -35,5 +35,5 @@ def create_receptor_agent():
         name="Receptor",
         system_prompt=SYSTEM_PROMPT.format(today=today),
         tools=TOOLS,
-        model_id="gemini-1.5-flash"
+        model_id="gemini-2.5-flash"
     )

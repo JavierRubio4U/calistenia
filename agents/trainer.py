@@ -56,5 +56,5 @@ def create_trainer_agent():
         name="Entrenador",
         system_prompt=SYSTEM_PROMPT.format(today=today),
         tools=TOOLS,
-        model_id="gemini-1.5-flash"
+        model_id="gemini-2.5-flash"
     )

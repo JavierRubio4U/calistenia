@@ -10,9 +10,11 @@ from typing import Any, Callable, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Ruta absoluta al .env del proyecto (2 niveles arriba: agents/ → proyecto/)
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 class Agent:
     """
@@ -29,7 +31,7 @@ class Agent:
         name: str,
         system_prompt: str,
         tools: Optional[List[Callable]] = None,
-        model_id: str = "gemini-1.5-flash",
+        model_id: str = "gemini-2.5-flash",
         response_schema: Optional[Type[BaseModel]] = None
     ):
         self.name = name
