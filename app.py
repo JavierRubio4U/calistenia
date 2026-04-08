@@ -74,31 +74,50 @@ with tab1:
 
     st.divider()
 
-    # ─── REPORTE POR VOZ (Mobile Ready) ──────────────────────
+    # ─── REPORTE (Voz o Texto) ────────────────────────────────
     st.subheader("¿Cómo te ha ido hoy?")
-    audio_file = st.audio_input("Graba tu reporte (voz directa desde el móvil)")
 
-    if audio_file is not None:
-        if st.button("📤 Enviar reporte a Gemini", use_container_width=True):
-            with st.spinner("Gemini está escuchando tu reporte..."):
+    modo = st.radio("Modo de reporte:", ["🎤 Voz", "⌨️ Texto"], horizontal=True)
+
+    if modo == "🎤 Voz":
+        audio_file = st.audio_input("Graba tu reporte")
+        if audio_file is not None:
+            if st.button("📤 Enviar reporte", use_container_width=True, type="primary"):
+                with st.spinner("Gemini está escuchando tu reporte..."):
+                    try:
+                        from google.genai import types
+                        audio_bytes = audio_file.read()
+                        # Usar el MIME type real del archivo (webm en móvil, wav en desktop)
+                        mime_type = getattr(audio_file, "type", None) or "audio/wav"
+                        st.caption(f"Formato detectado: `{mime_type}`")
+
+                        multimodal_input = [
+                            types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+                            "Soy Javi. Aquí tienes mi reporte de entrenamiento de hoy."
+                        ]
+                        receptor_resp, analyst_resp = orchestrator.report_session(multimodal_input)
+                        st.success("✅ Reporte guardado.")
+                        st.markdown(receptor_resp)
+                        if analyst_resp:
+                            st.info(analyst_resp)
+                    except Exception as e:
+                        st.error(f"Error al procesar el audio: {e}")
+    else:
+        texto = st.text_area(
+            "Escribe tu reporte:",
+            placeholder="Ej: 3 series de 10s colgado, 10 flexiones en banco, peso 134.5kg, me ha ido bien",
+            height=120
+        )
+        if st.button("📤 Enviar reporte", use_container_width=True, type="primary", disabled=not texto.strip()):
+            with st.spinner("Procesando tu reporte..."):
                 try:
-                    from google.genai import types
-                    audio_bytes = audio_file.read()
-
-                    multimodal_input = [
-                        types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
-                        "Soy Javi. Aquí tienes mi reporte de hoy desde mi Pixel 10a."
-                    ]
-
-                    receptor_resp, analyst_resp = orchestrator.report_session(multimodal_input)
-
+                    receptor_resp, analyst_resp = orchestrator.report_session(texto)
                     st.success("✅ Reporte guardado.")
                     st.markdown(receptor_resp)
                     if analyst_resp:
                         st.info(analyst_resp)
-
                 except Exception as e:
-                    st.error(f"Error al procesar el audio: {e}")
+                    st.error(f"Error: {e}")
 
 with tab2:
     st.subheader("Historial y Logros")
