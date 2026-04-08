@@ -1,0 +1,16 @@
+# .dockerignore
+venv/
+__pycache__/
+.env
+data/
+*.db
+.git/
+.cursorrules
+artifacts/
+brain/
+implementation_plan.md
+task.md
+walkthrough.md
+scripts/
+Dockerfile
+deploy_cloud.sh

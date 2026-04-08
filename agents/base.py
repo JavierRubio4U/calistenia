@@ -1,147 +1,86 @@
 """
-base.py - Clase base del Agente (EL CORAZÓN DEL SISTEMA)
+base.py - Clase base del Agente (Google Gemini Edition)
 
-╔══════════════════════════════════════════════════════════════════╗
-║  CONCEPTO CLAVE: EL BUCLE AGÉNTICO (Agentic Loop)              ║
-╠══════════════════════════════════════════════════════════════════╣
-║                                                                  ║
-║  Un agente NO es solo una llamada a un LLM.                     ║
-║  Un agente es un LLM + herramientas + un bucle de ejecución.   ║
-║                                                                  ║
-║  Flujo del bucle agéntico:                                      ║
-║                                                                  ║
-║  ┌──────────────────────────────────────────────┐               ║
-║  │  1. Envías mensaje al LLM (con tools)        │               ║
-║  │  2. El LLM responde:                         │               ║
-║  │     ├─ "Quiero usar esta tool" → EJECUTAS    │               ║
-║  │     │   la tool y le devuelves el resultado   │               ║
-║  │     │   → vuelve al paso 2                    │               ║
-║  │     └─ "Ya terminé, aquí está mi respuesta"   │               ║
-║  │         → FIN del bucle                       │               ║
-║  └──────────────────────────────────────────────┘               ║
-║                                                                  ║
-║  La MAGIA está en que el LLM DECIDE:                            ║
-║  - Qué herramientas usar (o ninguna)                            ║
-║  - En qué orden                                                 ║
-║  - Cuántas veces                                                ║
-║  - Con qué parámetros                                           ║
-║                                                                  ║
-║  Eso lo hace "agéntico": tiene AUTONOMÍA para actuar.           ║
-╚══════════════════════════════════════════════════════════════════╝
-
-¿POR QUÉ UNA CLASE BASE?
-Porque los 3 agentes (Receptor, Entrenador, Analista) comparten
-el mismo patrón: system prompt + tools + bucle. Solo cambian:
-  - El system prompt (su "personalidad" y conocimiento)
-  - Las tools disponibles (qué puede hacer)
-  - El modelo (haiku para tareas simples, sonnet para las complejas)
+Este archivo define la estructura de "Agente crudo":
+LLM + Tools + Estructura de Salida (Pydantic).
 """
 
-import json
-import anthropic
+import os
+from typing import Any, Callable, Dict, List, Optional, Type, Union
+from pydantic import BaseModel
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class Agent:
     """
-    Clase base para todos los agentes del sistema.
-
-    Cada agente necesita:
-      - name: nombre para logs/debug
-      - system_prompt: instrucciones especializadas (quién es, qué hace)
-      - tools: lista de herramientas que puede usar (formato Anthropic)
-      - tool_handlers: diccionario {nombre_tool: función_python}
-      - model: qué modelo de Claude usar
+    Agente base usando Google Gemini.
+    
+    Características:
+    - Bucle agéntico automático para uso de herramientas.
+    - Soporte nativo para esquemas de respuesta Pydantic.
+    - Configuración simplificada.
     """
 
-    def __init__(self, name, system_prompt, tools, tool_handlers, model="claude-sonnet-4-6"):
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        tools: Optional[List[Callable]] = None,
+        model_id: str = "gemini-1.5-flash",
+        response_schema: Optional[Type[BaseModel]] = None
+    ):
         self.name = name
-        self.client = anthropic.Anthropic()  # Lee ANTHROPIC_API_KEY del entorno
         self.system_prompt = system_prompt
-        self.tools = tools
-        self.tool_handlers = tool_handlers
-        self.model = model
+        self.model_id = model_id
+        self.tools = tools or []
+        self.response_schema = response_schema
+        
+        # Cliente oficial de Google
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-    def run(self, user_message, context=""):
+    def run(self, user_input: Union[str, List[Union[str, bytes]]], context: str = "") -> Any:
         """
-        Ejecuta el bucle agéntico.
-
-        Args:
-            user_message: lo que el usuario dice o la tarea a realizar
-            context: contexto adicional (ej: recomendaciones del Analista)
-
-        Returns:
-            str: la respuesta final del agente (texto)
-
-        ESTE ES EL BUCLE AGÉNTICO EN ACCIÓN:
-        ────────────────────────────────────
-        Observa cómo el while True implementa el bucle.
-        El agente sigue ejecutando tools hasta que decide
-        que ya tiene suficiente información para responder.
+        Ejecuta el agente. user_input puede ser texto o una lista con audio (bytes).
         """
-        # Preparar el mensaje inicial
-        full_message = f"{context}\n\n{user_message}" if context else user_message
-        messages = [{"role": "user", "content": full_message}]
+        print(f"\n  [{self.name}] Procesando...")
 
-        print(f"\n  [{self.name}] Pensando...")
+        # 1. Configuración de la petición
+        config = types.GenerateContentConfig(
+            system_instruction=self.system_prompt,
+            tools=self.tools if self.tools else None,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=False) if self.tools else None,
+            response_mime_type="application/json" if self.response_schema else "text/plain",
+            response_schema=self.response_schema if self.response_schema else None,
+        )
 
-        # ═══ INICIO DEL BUCLE AGÉNTICO ═══
-        while True:
-            # Paso 1: Llamar al LLM
-            # Le pasamos el system prompt (quién es), los tools (qué puede hacer)
-            # y los mensajes (la conversación hasta ahora)
-            kwargs = {
-                "model": self.model,
-                "max_tokens": 4096,
-                "system": self.system_prompt,
-                "messages": messages,
-            }
-            if self.tools:
-                kwargs["tools"] = self.tools
+        # 2. Preparar el contenido (incluyendo contexto si existe)
+        full_input = []
+        if context:
+            full_input.append(f"CONTEXTO PREVIO:\n{context}\n\n")
+        
+        if isinstance(user_input, str):
+            full_input.append(user_input)
+        else:
+            full_input.extend(user_input)
 
-            response = self.client.messages.create(**kwargs)
+        # 3. Llamada al modelo (Gemini maneja el bucle de tools automáticamente si se configura)
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=full_input,
+                config=config
+            )
 
-            # Guardar la respuesta del asistente en el historial
-            messages.append({"role": "assistant", "content": response.content})
+            # 4. Retornar resultado
+            if self.response_schema:
+                # Si pedimos JSON/Pydantic, Gemini devuelve el objeto parseado o el string JSON
+                return response.parsed if hasattr(response, 'parsed') and response.parsed else response.text
+            
+            return response.text
 
-            # Paso 2: ¿El LLM quiere usar tools?
-            if response.stop_reason == "tool_use":
-                # SÍ → ejecutar cada tool que pidió
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        print(f"  [{self.name}] Herramienta: {block.name}")
-
-                        # Buscar el handler Python para esta tool
-                        handler = self.tool_handlers.get(block.name)
-                        if handler:
-                            try:
-                                # Ejecutar la función con los args que eligió el LLM
-                                result = handler(**block.input)
-                            except Exception as e:
-                                result = {"error": str(e)}
-                        else:
-                            result = {"error": f"Tool '{block.name}' no registrada"}
-
-                        # Devolver el resultado al LLM
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(
-                                result, ensure_ascii=False, default=str
-                            )
-                        })
-
-                # Añadir resultados de tools como mensaje del "usuario"
-                # (así es como funciona la API: los resultados van en role=user)
-                messages.append({"role": "user", "content": tool_results})
-
-                # → Volver al paso 1 (el LLM procesa los resultados)
-            else:
-                # NO → el agente ha terminado, extraer texto
-                text_parts = [
-                    block.text
-                    for block in response.content
-                    if hasattr(block, "text")
-                ]
-                return "\n".join(text_parts)
-        # ═══ FIN DEL BUCLE AGÉNTICO ═══
+        except Exception as e:
+            print(f"  [Error en {self.name}] {str(e)}")
+            raise e

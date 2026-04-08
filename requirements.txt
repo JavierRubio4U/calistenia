@@ -1,12 +1,10 @@
 # === DEPENDENCIAS PRINCIPALES ===
-anthropic>=0.40.0         # SDK de Claude - el cerebro de los agentes
-rich>=13.0.0              # Interfaz bonita en terminal
-python-dotenv>=1.0.0      # Carga variables de entorno desde .env
+google-genai>=0.5.0         # SDK oficial de Google para Gemini
+pydantic>=2.0.0             # Para schemas estructurados devueltos por LLM
+rich>=13.0.0                # Interfaz de usuario bonita en la terminal
+python-dotenv>=1.0.0        # Cargar variables (.env)
+streamlit>=1.30.0           # Interfaz Web móvil para el parque
 
-# === OPCIONALES (entrada por voz) ===
-# En Desktop (Windows/Mac/Linux):
-#   pip install SpeechRecognition pyaudio
-#
-# En Android (Termux) con Whisper API:
-#   pip install openai
-#   pkg install termux-api
+# === DEPEDENCIAS MULTIMODALES (Entrada por voz nativa) ===
+sounddevice>=0.4.6          # Graba el audio desde el micrófono (Local PC)
+scipy>=1.10.0               # Guardar la grabación en archivo local .wav
