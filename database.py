@@ -126,17 +126,39 @@ def get_week_frequency() -> Dict[str, Any]:
     return {"sessions_this_week": res.count, "week_start": str(start_of_week)}
 
 def save_planned_workout(exercises: List[Dict[str, Any]], total_duration_minutes: int = 40, focus: str = "") -> Dict[str, Any]:
-    if not supabase: return {}
-    today = datetime.now().strftime("%Y-%m-%d")
-    data = {
-        "date": today,
-        "focus": focus,
-        "total_duration_minutes": total_duration_minutes,
-        "exercises_json": json.dumps(exercises, ensure_ascii=False),
-        "status": "PENDING"
-    }
-    supabase.table("planned_workouts").insert(data).execute()
-    return {"status": "ok"}
+    """Guarda la rutina planificada para hoy en la base de datos.
+
+    Args:
+        exercises: Lista de ejercicios planificados. Cada uno con keys: name, sets, reps, seconds.
+        total_duration_minutes: Duración total de la sesión en minutos.
+        focus: Foco o descripción de la sesión (ej: 'Agarre y fuerza superior').
+    """
+    print(f"[save_planned_workout] Llamada con {len(exercises or [])} ejercicios, focus={focus}", flush=True)
+    if not supabase:
+        print("[save_planned_workout] ERROR: Supabase no inicializado", flush=True)
+        return {"error": "Supabase no inicializado"}
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        # Convertir exercises a dicts puros (por si Gemini envía protobuf Struct)
+        exercises_clean = []
+        for ex in (exercises or []):
+            if not isinstance(ex, dict):
+                ex = dict(ex)
+            exercises_clean.append(ex)
+
+        data = {
+            "date": today,
+            "focus": str(focus) if focus else "",
+            "total_duration_minutes": int(total_duration_minutes) if total_duration_minutes else 40,
+            "exercises_json": json.dumps(exercises_clean, ensure_ascii=False),
+            "status": "PENDING"
+        }
+        supabase.table("planned_workouts").insert(data).execute()
+        print(f"[save_planned_workout] OK — rutina guardada para {today}", flush=True)
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"[save_planned_workout] EXCEPCIÓN: {type(e).__name__}: {e}", flush=True)
+        return {"error": str(e)}
 
 def get_all_sessions() -> List[Dict[str, Any]]:
     if not supabase: return []
