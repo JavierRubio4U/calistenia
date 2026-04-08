@@ -41,47 +41,67 @@ def update_user_weight(new_weight: float) -> Dict[str, Any]:
     return {"status": "ok", "new_weight": new_weight}
 
 def save_session(date: str, exercises: List[Dict[str, Any]], weight: Optional[float] = None, fatigue_level: Optional[int] = None, notes: Optional[str] = None, duration_minutes: int = 40) -> Dict[str, Any]:
-    """Guarda reporte de sesión y vincula al plan de hoy."""
-    if not supabase: return {}
-    
-    # 1. Buscar rutina planeada PENDING
-    planned = supabase.table("planned_workouts").select("id").eq("date", date).eq("status", "PENDING").limit(1).execute()
-    planned_id = planned.data[0]["id"] if planned.data else None
+    """Guarda reporte de sesión y vincula al plan de hoy.
 
-    if weight:
-        update_user_weight(weight)
-            
-    # 2. Insertar sesión
-    session_data = {
-        "planned_workout_id": planned_id,
-        "date": date,
-        "weight": weight,
-        "duration_minutes": duration_minutes,
-        "fatigue_level": fatigue_level,
-        "general_notes": notes
-    }
-    session_res = supabase.table("sessions").insert(session_data).execute()
-    session_id = session_res.data[0]["id"]
-    
-    # 3. Insertar ejercicios
-    for ex in exercises:
-        ex_data = {
-            "session_id": session_id,
-            "name": ex.get("name"),
-            "sets": ex.get("sets", 1),
-            "reps": ex.get("reps", 0),
-            "seconds": ex.get("seconds", 0),
-            "weight": ex.get("weight", 0),
-            "difficulty": ex.get("difficulty"),
-            "notes": ex.get("notes")
+    Args:
+        date: Fecha en formato YYYY-MM-DD.
+        exercises: Lista de ejercicios. Cada uno con keys: name (str),
+                   sets (int), reps (int), seconds (int), difficulty (int), notes (str).
+        weight: Peso corporal en kg.
+        fatigue_level: Nivel de fatiga 1-10.
+        notes: Notas generales de la sesión.
+        duration_minutes: Duración total en minutos.
+    """
+    print(f"[save_session] Llamada con date={date}, exercises={exercises}, weight={weight}")
+    if not supabase:
+        print("[save_session] ERROR: Supabase no inicializado")
+        return {"error": "Supabase no inicializado"}
+
+    try:
+        # 1. Buscar rutina planeada PENDING para hoy
+        planned = supabase.table("planned_workouts").select("id").eq("date", date).eq("status", "PENDING").limit(1).execute()
+        planned_id = planned.data[0]["id"] if planned.data else None
+
+        if weight:
+            update_user_weight(float(weight))
+
+        # 2. Insertar sesión
+        session_data = {
+            "planned_workout_id": planned_id,
+            "date": str(date),
+            "weight": float(weight) if weight is not None else None,
+            "duration_minutes": int(duration_minutes) if duration_minutes else 40,
+            "fatigue_level": int(fatigue_level) if fatigue_level is not None else None,
+            "general_notes": str(notes) if notes else None
         }
-        supabase.table("exercises").insert(ex_data).execute()
-    
-    # 4. Marcar plan como completado
-    if planned_id:
-        supabase.table("planned_workouts").update({"status": "COMPLETED"}).eq("id", planned_id).execute()
-            
-    return {"status": "ok", "session_id": session_id, "linked_to_plan": planned_id is not None}
+        session_res = supabase.table("sessions").insert(session_data).execute()
+        session_id = session_res.data[0]["id"]
+        print(f"[save_session] Sesión creada con id={session_id}")
+
+        # 3. Insertar ejercicios (defensivo con tipos)
+        for ex in exercises:
+            ex_data = {
+                "session_id": session_id,
+                "name": str(ex.get("name", "Ejercicio")),
+                "sets": int(ex.get("sets") or 1),
+                "reps": int(ex.get("reps") or 0),
+                "seconds": int(ex.get("seconds") or 0),
+                "weight": float(ex.get("weight") or 0),
+                "difficulty": int(ex.get("difficulty")) if ex.get("difficulty") is not None else None,
+                "notes": str(ex.get("notes")) if ex.get("notes") else None
+            }
+            supabase.table("exercises").insert(ex_data).execute()
+
+        # 4. Marcar plan como completado
+        if planned_id:
+            supabase.table("planned_workouts").update({"status": "COMPLETED"}).eq("id", planned_id).execute()
+
+        print(f"[save_session] OK — {len(exercises)} ejercicios guardados")
+        return {"status": "ok", "session_id": session_id, "ejercicios_guardados": len(exercises)}
+
+    except Exception as e:
+        print(f"[save_session] EXCEPCIÓN: {type(e).__name__}: {e}")
+        return {"error": str(e)}
 
 def get_recent_sessions(limit: int = 10) -> List[Dict[str, Any]]:
     if not supabase: return []
