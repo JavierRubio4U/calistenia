@@ -8,97 +8,108 @@ import streamlit as st
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-import pandas as pd
-import json
 
-# Cargar entorno y lógica base
+# ─── CRÍTICO: cargar .env ANTES de importar nada que use credenciales ───
 load_dotenv(Path(__file__).parent / ".env")
+
 from database import init_db, get_user_profile
 from agents import Orchestrator
 
-# Configuración de página con estética premium
+# Configuración de página
 st.set_page_config(
     page_title="Calistenia Coach",
     page_icon="💪",
     layout="centered"
 )
 
-# Inicialización
-if 'orchestrator' not in st.session_state:
+# ─── INICIALIZACIÓN ───────────────────────────────────────────
+@st.cache_resource
+def init_app():
     init_db()
-    st.session_state.orchestrator = Orchestrator()
+    return Orchestrator()
 
-# Estilos personalizados (Aesthetics)
-st.markdown("""
-<style>
-    .main { background-color: #0e1117; }
-    .stButton>button { width: 100%; border-radius: 10px; height: 3em; font-weight: bold; }
-    .stMetric { background-color: #1e2130; padding: 15px; border-radius: 15px; border: 1px solid #3e4150; }
-    h1, h2, h3 { color: #00ffcc; }
-</style>
-""", unsafe_allow_html=True)
+try:
+    orchestrator = init_app()
+    profile = get_user_profile()
+except Exception as e:
+    st.error(f"⚠️ Error al conectar con la base de datos: {e}")
+    st.info("Comprueba que SUPABASE_URL y SUPABASE_KEY están configuradas y que las tablas existen.")
+    st.code("Ver supabase_schema.sql para crear las tablas.", language="text")
+    st.stop()
 
-# ─── HEADER / DASHBOARD ───
-profile = get_user_profile()
-
+# ─── HEADER / DASHBOARD ──────────────────────────────────────
 if profile:
     st.title(f"💪 Hola, {profile['name']}!")
-    
-    # Métricas de Javi
+
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("Peso", f"{profile['current_weight']} kg", delta=f"{profile['current_weight']-profile['initial_weight']:.1f} kg")
+        current = profile.get('current_weight') or 0
+        initial = profile.get('initial_weight') or current
+        delta = round(current - initial, 1)
+        st.metric("Peso", f"{current} kg", delta=f"{delta} kg")
     with col2:
-        st.metric("Objetivo", "10s Barra")
-    
-    st.info(f"📍 **Estado:** {profile['injuries']}")
-else:
-    st.warning("⚠️ Perfil no inicializado. Por favor, ejecuta la app CLI primero o reinicia el servidor.")
+        st.metric("Objetivo", "10s Barra 🎯")
 
-# ─── ACCIONES PRINCIPALES ───
+    st.info(f"📍 {profile.get('injuries', '')}")
+else:
+    st.warning("⚠️ Perfil no encontrado. Ejecuta el SQL en Supabase dashboard primero.")
+    st.stop()
+
+# ─── ACCIONES PRINCIPALES ─────────────────────────────────────
 tab1, tab2 = st.tabs(["🔥 Mi Entrenamiento", "📈 Mi Progreso"])
 
 with tab1:
     st.subheader("Tu rutina de hoy")
-    
-    if st.button("🚀 Generar Rutina (Impacto 0)"):
+
+    if st.button("🚀 Generar Rutina (Impacto 0)", use_container_width=True, type="primary"):
         with st.spinner("Diseñando tu entrenamiento seguro..."):
-            routine_md = st.session_state.orchestrator.get_workout_plan()
-            st.session_state.current_routine = routine_md
-            st.markdown(routine_md)
-    
+            try:
+                routine_md = orchestrator.get_workout_plan()
+                st.session_state["routine"] = routine_md
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    if "routine" in st.session_state:
+        st.markdown(st.session_state["routine"])
+
     st.divider()
-    
-    # --- FEEDBACK POR VOZ (Mobile Ready) ---
+
+    # ─── REPORTE POR VOZ (Mobile Ready) ──────────────────────
     st.subheader("¿Cómo te ha ido hoy?")
-    audio_file = st.audio_input("Graba tu reporte final (Voz directa)")
+    audio_file = st.audio_input("Graba tu reporte (voz directa desde el móvil)")
 
     if audio_file is not None:
-        if st.button("📤 Enviar Reporte a Gemini"):
+        if st.button("📤 Enviar reporte a Gemini", use_container_width=True):
             with st.spinner("Gemini está escuchando tu reporte..."):
                 try:
-                    # Preparar audio para el receptor
                     from google.genai import types
                     audio_bytes = audio_file.read()
-                    
+
                     multimodal_input = [
                         types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
                         "Soy Javi. Aquí tienes mi reporte de hoy desde mi Pixel 10a."
                     ]
-                    
-                    receptor_resp, analyst_resp = st.session_state.orchestrator.report_session(multimodal_input)
-                    
-                    st.success("✅ Reporte procesado correctamente.")
-                    st.markdown(f"**Chat:** {receptor_resp}")
+
+                    receptor_resp, analyst_resp = orchestrator.report_session(multimodal_input)
+
+                    st.success("✅ Reporte guardado.")
+                    st.markdown(receptor_resp)
                     if analyst_resp:
-                        st.markdown(f"**Analista:** {analyst_resp}")
-                        
+                        st.info(analyst_resp)
+
                 except Exception as e:
                     st.error(f"Error al procesar el audio: {e}")
 
 with tab2:
     st.subheader("Historial y Logros")
-    if st.button("🔍 Analizar mi progreso"):
+
+    if st.button("🔍 Analizar mi progreso", use_container_width=True, type="primary"):
         with st.spinner("Revisando tus datos..."):
-            progress_md = st.session_state.orchestrator.analyze_progress()
-            st.markdown(progress_md)
+            try:
+                progress_md = orchestrator.analyze_progress()
+                st.session_state["progress"] = progress_md
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    if "progress" in st.session_state:
+        st.markdown(st.session_state["progress"])

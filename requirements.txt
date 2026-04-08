@@ -5,6 +5,7 @@ rich>=13.0.0                # Interfaz de usuario bonita en la terminal
 python-dotenv>=1.0.0        # Cargar variables (.env)
 streamlit>=1.30.0           # Interfaz Web móvil para el parque
 supabase>=2.0.0             # Cliente oficial de Supabase (HTTPS/Robusto)
+psycopg2-binary>=2.9.0      # Driver para PostgreSQL (Necesario para migraciones)
 
 # === DEPEDENCIAS MULTIMODALES (Entrada por voz nativa) ===
 sounddevice>=0.4.6          # Graba el audio desde el micrófono (Local PC)
