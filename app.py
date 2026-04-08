@@ -56,7 +56,7 @@ else:
     st.stop()
 
 # ─── ACCIONES PRINCIPALES ─────────────────────────────────────
-tab1, tab2 = st.tabs(["🔥 Mi Entrenamiento", "📈 Mi Progreso"])
+tab1, tab2, tab3 = st.tabs(["🔥 Mi Entrenamiento", "📈 Mi Progreso", "💬 Preguntar al Coach"])
 
 with tab1:
     st.subheader("Tu rutina de hoy")
@@ -118,6 +118,47 @@ with tab1:
                         st.info(analyst_resp)
                 except Exception as e:
                     st.error(f"Error: {e}")
+
+with tab3:
+    st.subheader("Pregunta al Coach")
+    st.caption("Técnica, dudas sobre ejercicios, adaptaciones para tu lesión...")
+
+    modo_coach = st.radio("Modo:", ["⌨️ Texto", "🎤 Voz"], horizontal=True, key="modo_coach")
+
+    if modo_coach == "⌨️ Texto":
+        pregunta = st.text_area(
+            "Tu pregunta:",
+            placeholder="Ej: ¿Cómo hago correctamente el remo australiano? ¿Qué hago si me duele el pie?",
+            height=100,
+            key="pregunta_coach"
+        )
+        if st.button("🤔 Preguntar", use_container_width=True, type="primary", disabled=not (pregunta or "").strip()):
+            with st.spinner("El Coach está pensando..."):
+                try:
+                    respuesta = orchestrator.ask_coach(pregunta)
+                    st.session_state["coach_resp"] = respuesta
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    else:
+        audio_coach = st.audio_input("Graba tu pregunta", key="audio_coach")
+        if audio_coach is not None:
+            if st.button("🤔 Preguntar", use_container_width=True, type="primary", key="btn_coach_audio"):
+                with st.spinner("El Coach está escuchando..."):
+                    try:
+                        from google.genai import types as gtypes
+                        audio_bytes = audio_coach.read()
+                        mime_type = getattr(audio_coach, "type", None) or "audio/wav"
+                        multimodal = [
+                            gtypes.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+                            "Soy Javi. Tengo esta duda sobre mis ejercicios:"
+                        ]
+                        respuesta = orchestrator.ask_coach(multimodal)
+                        st.session_state["coach_resp"] = respuesta
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+    if "coach_resp" in st.session_state:
+        st.markdown(st.session_state["coach_resp"])
 
 with tab2:
     st.subheader("Historial y Logros")

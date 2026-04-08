@@ -9,6 +9,7 @@ from typing import Union, List, Tuple, Optional
 from .receptor import create_receptor_agent
 from .trainer import create_trainer_agent
 from .analyst import create_analyst_agent
+from .coach import create_coach_agent
 from database import get_all_sessions
 
 class Orchestrator:
@@ -21,6 +22,7 @@ class Orchestrator:
         self.receptor = create_receptor_agent()
         self.trainer = create_trainer_agent()
         self.analyst = create_analyst_agent()
+        self.coach = create_coach_agent()
 
     def get_workout_plan(self) -> str:
         """
@@ -54,6 +56,13 @@ class Orchestrator:
             )
 
         return receptor_response, analyst_response
+
+    def ask_coach(self, question: Union[str, List]) -> str:
+        """
+        Flujo: Consulta al Coach.
+        Acepta texto o audio con una pregunta sobre ejercicios, técnica, etc.
+        """
+        return self.coach.run(question)
 
     def analyze_progress(self) -> str:
         """
