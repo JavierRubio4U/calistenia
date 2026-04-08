@@ -23,6 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar el resto del código
 COPY . .
 
+# Forzar salida sin buffer para que print() aparezca en Cloud Run logs
+ENV PYTHONUNBUFFERED=1
+
 # Exponer el puerto predeterminado de Streamlit (aunque Cloud Run usara $PORT)
 ENV PORT=8080
 EXPOSE 8080
