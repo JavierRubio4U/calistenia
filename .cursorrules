@@ -30,9 +30,9 @@ Todo explícito y con responsabilidad única por agente.
 | Simulador | save_session, get_all_sessions | Genera datos ficticios (testing) |
 | ARP Evolver | get_all_sessions, save_recommendation | Meta-agente: mejora los otros agentes |
 
-## Scripts de desarrollo
-- `python run_simulator.py` — poblar DB con sesiones ficticias (Gemini genera datos, Python guarda — sin agentic loop para evitar alucinaciones)
-- `python run_arp.py` — analizar datos, reescribir prompts de agentes automáticamente y guardar recomendación
+## Scripts de desarrollo (en scripts/)
+- `python scripts/run_simulator.py` — poblar DB con sesiones ficticias (Gemini genera datos, Python guarda — sin agentic loop para evitar alucinaciones)
+- `python scripts/run_arp.py` — analizar datos, reescribir prompts de agentes automáticamente y guardar recomendación
 
 ## Reglas técnicas críticas
 1. **Bucle agéntico MANUAL en base.py** — el SDK google-genai 1.x NO ejecuta tools automáticamente

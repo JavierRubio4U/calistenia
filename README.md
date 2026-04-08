@@ -153,8 +153,9 @@ calistenia/
 ├── voice.py                # Grabación de audio (desktop)
 ├── supabase_schema.sql     # SQL para crear tablas manualmente
 │
-├── run_simulator.py        # 🧪 Genera sesiones ficticias en Supabase
-├── run_arp.py              # 🤖 Ejecuta el ARP Evolver (analiza + reescribe prompts)
+├── scripts/
+│   ├── run_simulator.py    # 🧪 Genera sesiones ficticias en Supabase
+│   └── run_arp.py          # 🤖 Ejecuta el ARP Evolver (analiza + reescribe prompts)
 │
 ├── agents/
 │   ├── base.py             # ⭐ BUCLE AGÉNTICO EXPLÍCITO (leer primero)
