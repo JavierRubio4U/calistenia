@@ -39,5 +39,5 @@ def create_analyst_agent():
         name="Analista",
         system_prompt=SYSTEM_PROMPT,
         tools=TOOLS,
-        model_id="gemini-1.5-flash"
+        model_id="gemini-2.5-flash"
     )
