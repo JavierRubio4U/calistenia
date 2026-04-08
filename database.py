@@ -52,9 +52,9 @@ def save_session(date: str, exercises: List[Dict[str, Any]], weight: Optional[fl
         notes: Notas generales de la sesión.
         duration_minutes: Duración total en minutos.
     """
-    print(f"[save_session] Llamada con date={date}, exercises={exercises}, weight={weight}")
+    print(f"[save_session] Llamada con date={date}, exercises={exercises}, weight={weight}", flush=True)
     if not supabase:
-        print("[save_session] ERROR: Supabase no inicializado")
+        print("[save_session] ERROR: Supabase no inicializado", flush=True)
         return {"error": "Supabase no inicializado"}
 
     try:
@@ -76,13 +76,23 @@ def save_session(date: str, exercises: List[Dict[str, Any]], weight: Optional[fl
         }
         session_res = supabase.table("sessions").insert(session_data).execute()
         session_id = session_res.data[0]["id"]
-        print(f"[save_session] Sesión creada con id={session_id}")
+        print(f"[save_session] Sesión creada con id={session_id}", flush=True)
 
         # 3. Insertar ejercicios (defensivo con tipos)
-        for ex in exercises:
+        # Convertir exercises a lista de dicts puros (por si Gemini envía protobuf Struct)
+        exercises_clean = []
+        for ex in (exercises or []):
+            if hasattr(ex, '_pb') or not isinstance(ex, dict):
+                # protobuf Struct → dict
+                ex = dict(ex)
+            exercises_clean.append(ex)
+
+        print(f"[save_session] exercises_clean={exercises_clean}", flush=True)
+
+        for ex in exercises_clean:
             ex_data = {
                 "session_id": session_id,
-                "name": str(ex.get("name", "Ejercicio")),
+                "name": str(ex.get("name") or "Ejercicio"),
                 "sets": int(ex.get("sets") or 1),
                 "reps": int(ex.get("reps") or 0),
                 "seconds": int(ex.get("seconds") or 0),
@@ -96,11 +106,11 @@ def save_session(date: str, exercises: List[Dict[str, Any]], weight: Optional[fl
         if planned_id:
             supabase.table("planned_workouts").update({"status": "COMPLETED"}).eq("id", planned_id).execute()
 
-        print(f"[save_session] OK — {len(exercises)} ejercicios guardados")
+        print(f"[save_session] OK — {len(exercises_clean)} ejercicios guardados", flush=True)
         return {"status": "ok", "session_id": session_id, "ejercicios_guardados": len(exercises)}
 
     except Exception as e:
-        print(f"[save_session] EXCEPCIÓN: {type(e).__name__}: {e}")
+        print(f"[save_session] EXCEPCIÓN: {type(e).__name__}: {e}", flush=True)
         return {"error": str(e)}
 
 def get_recent_sessions(limit: int = 10) -> List[Dict[str, Any]]:
