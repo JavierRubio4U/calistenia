@@ -24,15 +24,22 @@ class Orchestrator:
         self.analyst = create_analyst_agent()
         self.coach = create_coach_agent()
 
-    def get_workout_plan(self) -> str:
+    def get_workout_plan(self, context: str = "") -> str:
         """
         Flujo: Generar rutina del día.
         El Entrenador consulta autónomamente el historial en la DB.
+
+        Args:
+            context: Estado de Javi hoy (energía, dolor de pie, tiempo disponible, etc.)
         """
-        return self.trainer.run(
-            "Genera una rutina de calistenia de 40 minutos adaptada a mi historial actual. "
+        base_prompt = (
+            "Genera una rutina de calistenia adaptada a mi historial actual. "
             "Usa tus herramientas para evaluar mi progreso y frecuencia."
         )
+        if context:
+            base_prompt = f"ESTADO DE HOY: {context}\n\n{base_prompt}"
+
+        return self.trainer.run(base_prompt)
 
     def report_session(self, report_input: Union[str, List]) -> Tuple[str, Optional[str]]:
         """

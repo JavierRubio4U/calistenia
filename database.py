@@ -40,7 +40,7 @@ def update_user_weight(new_weight: float) -> Dict[str, Any]:
         supabase.table("user_profile").update({"current_weight": new_weight, "last_updated": "now()"}).eq("id", profile["id"]).execute()
     return {"status": "ok", "new_weight": new_weight}
 
-def save_session(date: str, exercises: List[Dict[str, Any]], weight: Optional[float] = None, fatigue_level: Optional[int] = None, notes: Optional[str] = None, duration_minutes: int = 40) -> Dict[str, Any]:
+def save_session(date: str, exercises: List[dict], weight: Optional[float] = None, fatigue_level: Optional[int] = None, notes: Optional[str] = None, duration_minutes: int = 40) -> dict:
     """Guarda reporte de sesión y vincula al plan de hoy.
 
     Args:
@@ -58,6 +58,12 @@ def save_session(date: str, exercises: List[Dict[str, Any]], weight: Optional[fl
         return {"error": "Supabase no inicializado"}
 
     try:
+        # 0. Evitar duplicados: si ya existe una sesión para esta fecha, no guardar
+        existing = supabase.table("sessions").select("id").eq("date", str(date)).execute()
+        if existing.data:
+            print(f"[save_session] Ya existe sesión para {date}, omitiendo.", flush=True)
+            return {"status": "already_exists", "date": date, "session_id": existing.data[0]["id"]}
+
         # 1. Buscar rutina planeada PENDING para hoy
         planned = supabase.table("planned_workouts").select("id").eq("date", date).eq("status", "PENDING").limit(1).execute()
         planned_id = planned.data[0]["id"] if planned.data else None
@@ -125,7 +131,7 @@ def get_week_frequency() -> Dict[str, Any]:
     res = supabase.table("sessions").select("id", count="exact").gte("date", start_of_week.isoformat()).execute()
     return {"sessions_this_week": res.count, "week_start": str(start_of_week)}
 
-def save_planned_workout(exercises: List[Dict[str, Any]], total_duration_minutes: int = 40, focus: str = "") -> Dict[str, Any]:
+def save_planned_workout(exercises: List[dict], total_duration_minutes: int = 40, focus: str = "") -> dict:
     """Guarda la rutina planificada para hoy en la base de datos.
 
     Args:

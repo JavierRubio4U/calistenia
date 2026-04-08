@@ -146,25 +146,35 @@ sequenceDiagram
 ```
 calistenia/
 │
-├── app.py                  # Interfaz Streamlit (web móvil)
+├── app.py                  # Interfaz Streamlit (web móvil) — con Google OAuth
 ├── main.py                 # CLI para uso local / Termux Android
 ├── database.py             # Capa de datos (Supabase SDK)
 ├── migration.py            # Auto-creación de tablas en Cloud Run
 ├── voice.py                # Grabación de audio (desktop)
 ├── supabase_schema.sql     # SQL para crear tablas manualmente
 │
+├── run_simulator.py        # 🧪 Genera sesiones ficticias en Supabase
+├── run_arp.py              # 🤖 Ejecuta el ARP Evolver (analiza + reescribe prompts)
+│
 ├── agents/
-│   ├── base.py             # ⭐ EL BUCLE AGÉNTICO (leer primero)
+│   ├── base.py             # ⭐ BUCLE AGÉNTICO EXPLÍCITO (leer primero)
 │   ├── orchestrator.py     # Coordinación entre agentes
 │   ├── receptor.py         # Agente 1: parseo de reportes
 │   ├── trainer.py          # Agente 2: diseño de rutinas
-│   └── analyst.py          # Agente 3: análisis de progreso
+│   ├── analyst.py          # Agente 3: análisis de progreso
+│   ├── simulator.py        # Agente 4: generación de datos de sesión (sin tool loop)
+│   ├── arp_evolver.py      # Agente 5: meta-agente de mejora autónoma del sistema
+│   └── agent_manager.py    # Tools para leer/reescribir prompts de agentes
 │
+├── .streamlit/
+│   ├── secrets.toml        # 🔒 Credenciales + config OAuth (no en git)
+│   └── secrets.toml.example # Plantilla con instrucciones
+│
+├── docker_entrypoint.sh    # Genera secrets.toml desde env vars al arrancar en Cloud Run
 ├── .env                    # 🔒 Credenciales locales (no en git)
-├── .env.example            # Plantilla de variables necesarias
 ├── requirements.txt        # Dependencias Python
 ├── Dockerfile              # Contenedor para Cloud Run
-└── deploy_cloud.ps1        # Script de despliegue (Windows PowerShell)
+└── deploy_cloud.ps1        # Script de despliegue — incluye vars OAuth
 ```
 
 ---
@@ -182,7 +192,7 @@ calistenia/
 
 ---
 
-## 🤖 Los 3 Agentes
+## 🤖 Los 5 Agentes
 
 ### 📥 Receptor (`agents/receptor.py`)
 - **Modelo:** Gemini 2.5 Flash
@@ -201,6 +211,20 @@ calistenia/
 - **Input:** Petición de análisis (se activa automáticamente tras ≥3 sesiones)
 - **Tools:** `get_user_profile`, `get_all_sessions`, `get_exercise_history`, `save_recommendation`
 - **Misión:** Detectar progreso, estancamientos, y dejar recomendaciones para el Entrenador
+
+### 🧪 Simulador (`agents/simulator.py`)
+- **Modelo:** Gemini 2.5 Flash
+- **Input:** Fecha de inicio + número de días
+- **Tools:** `save_session`, `get_all_sessions`
+- **Misión:** Generar datos ficticios de entrenamiento realistas para poblar la DB (desarrollo/testing)
+- **Uso:** `python run_simulator.py --start 2026-03-01 --days 28`
+
+### 🔄 ARP Evolver (`agents/arp_evolver.py`)
+- **Modelo:** Gemini 2.5 Flash
+- **Input:** Petición de análisis global
+- **Tools:** `get_all_sessions`, `get_recent_recommendations`, `save_recommendation`
+- **Misión:** Meta-agente que analiza patrones en los datos reales y propone mejoras concretas a los system prompts de los otros agentes
+- **Uso:** `python run_arp.py`
 
 ---
 

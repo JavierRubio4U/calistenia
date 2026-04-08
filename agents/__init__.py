@@ -11,5 +11,7 @@ Aquí viven los 3 agentes especializados + el orquestador:
 """
 
 from .orchestrator import Orchestrator
+from .simulator import create_simulator_agent
+from .arp_evolver import create_arp_evolver_agent
 
-__all__ = ["Orchestrator"]
+__all__ = ["Orchestrator", "create_simulator_agent", "create_arp_evolver_agent"]

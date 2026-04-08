@@ -15,25 +15,40 @@ Todo explícito y con responsabilidad única por agente.
 - **Deploy:** `deploy_cloud.ps1` (Windows PowerShell) + `Dockerfile`
 
 ## Archivos clave (leer en este orden)
-1. `agents/base.py` — el bucle agéntico explicado paso a paso
+1. `agents/base.py` — el bucle agéntico EXPLÍCITO (manual, no AFC automático del SDK)
 2. `database.py` — tools que usan los agentes, usa Supabase SDK
-3. `agents/orchestrator.py` — coordinación determinista entre los 3 agentes
-4. `agents/receptor.py` / `trainer.py` / `analyst.py` — agentes especializados
+3. `agents/orchestrator.py` — coordinación determinista entre los agentes
+4. `agents/receptor.py` / `trainer.py` / `analyst.py` — agentes de uso principal
+5. `agents/simulator.py` / `arp_evolver.py` — agentes de desarrollo/meta-análisis
 
-## Los 3 Agentes
-| Agente | Modelo | Tools principales | Misión |
-|---|---|---|---|
-| Receptor | gemini-2.5-flash | save_session | Parsea voz/texto → datos DB |
-| Entrenador | gemini-2.5-flash | get_*_sessions, save_planned_workout | Rutina 40min impacto cero |
-| Analista | gemini-2.5-flash | get_all_sessions, save_recommendation | Detecta progreso, recomienda |
+## Los 5 Agentes
+| Agente | Tools principales | Misión |
+|---|---|---|
+| Receptor | save_session | Parsea voz/texto → datos DB |
+| Entrenador | get_*_sessions, save_planned_workout | Rutina 40min impacto cero |
+| Analista | get_all_sessions, save_recommendation | Detecta progreso, recomienda |
+| Simulador | save_session, get_all_sessions | Genera datos ficticios (testing) |
+| ARP Evolver | get_all_sessions, save_recommendation | Meta-agente: mejora los otros agentes |
+
+## Scripts de desarrollo
+- `python run_simulator.py` — poblar DB con sesiones ficticias (Gemini genera datos, Python guarda — sin agentic loop para evitar alucinaciones)
+- `python run_arp.py` — analizar datos, reescribir prompts de agentes automáticamente y guardar recomendación
 
 ## Reglas técnicas críticas
-1. **Tools = funciones Python** con type hints + docstring — Gemini extrae el schema automáticamente
-2. **load_dotenv() siempre con path:** `load_dotenv(Path(__file__).parent / ".env")`
-3. **Modelo:** `gemini-2.5-flash` — gemini-1.5-flash y gemini-2.0-flash no disponibles
-4. **Audio MIME type:** usar `audio_file.type` dinámicamente, NUNCA hardcodear `audio/wav`
-5. **Supabase:** variables SUPABASE_URL y SUPABASE_KEY — el cliente se inicializa en database.py
-6. **.env nunca en git** — en Cloud Run se pasan con `--set-env-vars`
+1. **Bucle agéntico MANUAL en base.py** — el SDK google-genai 1.x NO ejecuta tools automáticamente
+   con `generate_content`. El loop está implementado explícitamente en `Agent.run()`.
+2. **Type hints de tools:** NUNCA usar `Any` en parámetros de entrada — rompe el JSON schema de Gemini.
+   Usar `List[dict]` en lugar de `List[Dict[str, Any]]`.
+3. **load_dotenv() siempre con path:** `load_dotenv(Path(__file__).parent / ".env")`
+4. **Modelo:** `gemini-2.5-flash` — gemini-1.5-flash y gemini-2.0-flash no disponibles
+5. **Audio MIME type:** usar `audio_file.type` dinámicamente, NUNCA hardcodear `audio/wav`
+6. **Supabase:** variables SUPABASE_URL y SUPABASE_KEY — el cliente se inicializa en database.py
+7. **.env nunca en git** — en Cloud Run se pasan con `--set-env-vars`
+8. **Deduplicación en save_session:** ya implementada — comprueba si existe sesión para esa fecha antes de insertar
+9. **Autenticación:** Google OAuth via `st.login("google")` (Streamlit nativo). Requiere `[auth]` en `.streamlit/secrets.toml`. Solo `ALLOWED_EMAIL` puede acceder.
+10. **Formularios Streamlit:** usar `st.form` en lugar de widgets sueltos + botón para evitar doble-click (los widgets sueltos causan reruns intermedios que "pierden" el click).
+11. **ARP Evolver:** usa `agents/agent_manager.py` para leer/reescribir prompts. Herramientas: `read_agent_prompt(agent_name)`, `update_agent_prompt(agent_name, new_prompt, reason)`.
+12. **Cloud Run + secrets.toml:** `docker_entrypoint.sh` genera el archivo desde env vars al arrancar el contenedor. Las vars OAuth se pasan en `deploy_cloud.ps1`.
 
 ## Perfil del usuario (Javi)
 - 56 años, 135 kg, fascitis plantar crónica (evitar impacto en planta del pie)

@@ -30,5 +30,8 @@ ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 EXPOSE 8080
 
-# Comando para arrancar Streamlit (ajustando a la variable PORT de Cloud Run)
-CMD streamlit run app.py --server.port=${PORT} --server.address=0.0.0.0
+# Script de arranque: genera secrets.toml desde variables de entorno y lanza Streamlit
+COPY docker_entrypoint.sh /app/docker_entrypoint.sh
+RUN chmod +x /app/docker_entrypoint.sh
+
+CMD ["/app/docker_entrypoint.sh"]

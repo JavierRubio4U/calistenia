@@ -2,6 +2,7 @@
 app.py - Interfaz Web Móvil (Streamlit) para Calistenia Coach
 
 Diseñada para que Javi la use desde su Pixel 10a en el parque.
+Protegida con Google OAuth — solo el email autorizado puede acceder.
 """
 
 import streamlit as st
@@ -22,6 +23,22 @@ st.set_page_config(
     layout="centered"
 )
 
+# ─── AUTENTICACIÓN ────────────────────────────────────────────
+ALLOWED_EMAIL = os.getenv("ALLOWED_EMAIL", "")
+
+if not st.user.is_logged_in:
+    st.title("💪 Calistenia Coach")
+    st.markdown("Tu entrenador personal con IA. Acceso privado.")
+    if st.button("Entrar con Google", type="primary", use_container_width=True):
+        st.login("google")
+    st.stop()
+
+if ALLOWED_EMAIL and st.user.email != ALLOWED_EMAIL:
+    st.error(f"Acceso no autorizado: {st.user.email}")
+    if st.button("Cerrar sesión"):
+        st.logout()
+    st.stop()
+
 # ─── INICIALIZACIÓN ───────────────────────────────────────────
 @st.cache_resource
 def init_app():
@@ -34,12 +51,17 @@ try:
 except Exception as e:
     st.error(f"⚠️ Error al conectar con la base de datos: {e}")
     st.info("Comprueba que SUPABASE_URL y SUPABASE_KEY están configuradas y que las tablas existen.")
-    st.code("Ver supabase_schema.sql para crear las tablas.", language="text")
     st.stop()
 
 # ─── HEADER / DASHBOARD ──────────────────────────────────────
 if profile:
-    st.title(f"💪 Hola, {profile['name']}!")
+    col_title, col_logout = st.columns([4, 1])
+    with col_title:
+        st.title(f"💪 Hola, {profile['name']}!")
+    with col_logout:
+        st.write("")
+        if st.button("Salir", use_container_width=True):
+            st.logout()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -61,10 +83,39 @@ tab1, tab2, tab3 = st.tabs(["🔥 Mi Entrenamiento", "📈 Mi Progreso", "💬 P
 with tab1:
     st.subheader("Tu rutina de hoy")
 
-    if st.button("🚀 Generar Rutina (Impacto 0)", use_container_width=True, type="primary"):
+    # ─── FORMULARIO PRE-ENTRENO ───────────────────────────────
+    with st.form("form_rutina"):
+        col_e, col_p = st.columns(2)
+        with col_e:
+            energia = st.slider("Nivel de energía", 1, 10, 7,
+                                help="1 = agotado, 10 = con mucha energía")
+        with col_p:
+            dolor_pie = st.checkbox("Me duele el pie hoy", value=False)
+
+        col_t, col_n = st.columns(2)
+        with col_t:
+            tiempo = st.radio("Tiempo disponible", ["30 min", "40 min", "60 min"],
+                              index=1, horizontal=True)
+        with col_n:
+            nota_previa = st.text_input("Algo más que deba saber",
+                                        placeholder="Ej: dormí mal, me duele el hombro...")
+
+        generar = st.form_submit_button("🚀 Generar Rutina", use_container_width=True, type="primary")
+
+    if generar:
+        # Construir contexto del estado de hoy
+        contexto_hoy = f"Nivel de energía de Javi hoy: {energia}/10."
+        if dolor_pie:
+            contexto_hoy += " AVISO: hoy tiene dolor en el pie — reducir volumen de piernas y extremar precauciones."
+        else:
+            contexto_hoy += " El pie está bien hoy."
+        contexto_hoy += f" Tiempo disponible: {tiempo}."
+        if nota_previa.strip():
+            contexto_hoy += f" Nota adicional: {nota_previa.strip()}."
+
         with st.spinner("Diseñando tu entrenamiento seguro..."):
             try:
-                routine_md = orchestrator.get_workout_plan()
+                routine_md = orchestrator.get_workout_plan(context=contexto_hoy)
                 st.session_state["routine"] = routine_md
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -87,7 +138,6 @@ with tab1:
                     try:
                         from google.genai import types
                         audio_bytes = audio_file.read()
-                        # Usar el MIME type real del archivo (webm en móvil, wav en desktop)
                         mime_type = getattr(audio_file, "type", None) or "audio/wav"
                         st.caption(f"Formato detectado: `{mime_type}`")
 
