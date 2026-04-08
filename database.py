@@ -124,6 +124,23 @@ def get_recent_recommendations(limit: int = 5) -> List[Dict[str, Any]]:
     res = supabase.table("analyst_recommendations").select("*").order("date", desc=True).limit(limit).execute()
     return res.data
 
+def get_days_since_last_session() -> Optional[int]:
+    """Calcula cuántos días han pasado desde el último entrenamiento."""
+    if not supabase: return None
+    res = supabase.table("sessions").select("date").order("date", desc=True).limit(1).execute()
+    if not res.data:
+        return None
+    last_date = datetime.strptime(res.data[0]["date"], "%Y-%m-%d").date()
+    delta = datetime.now().date() - last_date
+    return delta.days
+
+def get_exercise_history(name: str) -> List[Dict[str, Any]]:
+    """Obtiene el historial de progreso de un ejercicio específico."""
+    if not supabase: return []
+    # Buscamos en la tabla de ejercicios filtrando por nombre
+    res = supabase.table("exercises").select("*, sessions(date)").eq("name", name).execute()
+    return res.data
+
 def init_db():
     """Inicialización manual recomendada vía Supabase SQL Editor."""
     # Como el cliente Supabase-py es para datos, la creación de tablas 
