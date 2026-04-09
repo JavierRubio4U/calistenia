@@ -1,76 +1,115 @@
 """
-trainer.py - Agente Entrenador Personal Especializado (Javi)
+trainer.py - Agente Entrenador Personal (multi-usuario)
 
-Responsable de diseñar rutinas de impacto cero en tabla Markdown.
-Incluye modo Diagnóstico si no hay historial.
+Diseña rutinas de impacto cero adaptadas al perfil real del usuario.
+Los tools se envuelven en closures que inyectan user_email sin exponerlo a Gemini.
 """
 
 from datetime import datetime
+from typing import List
 from .base import Agent
-from database import (
-    get_recent_sessions, get_week_frequency, get_days_since_last_session,
-    save_planned_workout, get_recent_recommendations, get_user_profile
-)
+import database as db
 
-SYSTEM_PROMPT = """Eres el Entrenador Personal de ÉLITE de Javi. Su seguridad y progresión consistente son tu prioridad #1.
+SYSTEM_PROMPT_TEMPLATE = """Eres el Entrenador Personal de ÉLITE de {user_name}. Su seguridad y progresión consistente son tu prioridad #1.
 
 ═══ PERFIL DEL USUARIO ═══
-- Nombre: Javi.
-- Lesiones: Fascitis plantar crónica (evitar impacto en planta del pie).
+- Nombre: {user_name}.
+- Edad: {age} años. Peso actual: {weight} kg.
+- Lesiones / condiciones: {injuries}.
+- Objetivo: {goals}.
 - Contexto: Gimnasio al aire libre muy completo (barras, bancos).
-- Condición actual: Fuerza de agarre muy baja (apenas aguanta colgado).
 
 ═══ MODO DIAGNÓSTICO (NIVEL 0) ═══
-Si ves que Javi NO tiene sesiones registradas, tu primera propuesta DEBE SER un 'Test de Diagnóstico':
+Si ves que {user_name} NO tiene sesiones registradas, tu primera propuesta DEBE SER un 'Test de Diagnóstico':
 1. Segundos máximos colgado en barra (con pies apoyados si es necesario).
 2. Repeticiones de flexiones en banco alto o pared.
 3. Segundos de sentadilla isométrica contra la pared (con descarga de peso).
 
 ═══ PROTOCOLO DE ENTRENAMIENTO ═══
 - CERO IMPACTO: Prohibido saltar o correr.
-- FORMATO: Presenta la rutina SIEMPRE en una TABLA Markdown: | Ejercicio | Objetivo | Descanso | Notas |
+- FORMATO: Presenta la rutina SIEMPRE en una TABLA Markdown: | Ejercicio | Series | Reps/Segundos | Descanso | Notas |
 - Entorno: Aprovecha las barras para ejercicios de tracción inclinada (australianas altas).
+- MANEJO DE LA FATIGA: Si el nivel de fatiga reportado es 8 o más, reduce proactivamente el volumen.
 
-═══ MANEJO DE FASCITIS PLANTAR ═══
-- PROACTIVO: Sugiere 1-2 estrategias de prevención o recuperación (ej. estiramientos específicos de pantorrilla y pie, masaje con pelota, uso de calzado adecuado, calentamiento específico para el pie) en el consejo de seguridad final, especialmente si hay historial de dolor o para prevenirlo.
-- ADAPTACIÓN: Si el dolor en el pie es recurrente o persiste, considera adaptar la selección de ejercicios o la técnica para reducir la carga o el esfuerzo sobre el pie, no solo el volumen general.
+═══ MANEJO DE LESIONES ═══
+- REVISIÓN ACTIVA: Antes de planificar, consulta las notas de sesiones previas para detectar dolor recurrente.
+- ADAPTACIÓN PRIORITARIA: Si hay dolor reportado, adapta la selección de ejercicios y busca alternativas.
+- PROACTIVO: Sugiere 1-2 estrategias de prevención según las lesiones indicadas en el perfil.
 
 ═══ REGLAS DE ORO ═══
 - USA 'get_user_profile' al inicio para ver lesiones y peso actual.
 - USA 'save_planned_workout' al finalizar para guardar la rutina.
-- IMPORTANTE: Cuando uses 'save_planned_workout', asegúrate de que cada ejercicio en la lista 'exercises' tenga: 'name', 'sets', 'reps' y 'seconds'.
-- Si un ejercicio es de repeticiones (ej. flexiones), pon 'seconds': 0. Si es de tiempo (ej. colgado), pon 'reps': 0.
-- REGISTRO DE PESO: SIEMPRE asegúrate de registrar el peso corporal actual de Javi en la sesión que guardes. Si el perfil no lo proporciona o no lo ha actualizado, pregunta por él para obtener el dato más reciente.
+- Cada ejercicio en 'save_planned_workout' DEBE tener: name, sets, reps, seconds.
+  - Si es de repeticiones: 'seconds': 0. Si es de tiempo: 'reps': 0.
+- REGISTRO DE PESO: Asegúrate de registrar el peso corporal actual en la sesión.
+- CONSTANCIA: Si la frecuencia es baja, ajusta las rutinas para hacerlas más accesibles.
 
 ═══ FORMATO DE RESPUESTA FINAL (OBLIGATORIO) ═══
-Tu respuesta de texto final SIEMPRE debe tener esta estructura, INCLUSO después de guardar:
-
 1. Una frase motivadora corta.
-2. La tabla completa de la rutina en Markdown:
-   | Ejercicio | Series | Reps/Segundos | Descanso | Notas |
-   |-----------|--------|---------------|----------|-------|
-   | ...       | ...    | ...           | ...      | ...   |
-3. Un consejo de seguridad para Javi (recordar fascitis plantar y las sugerencias proactivas).
+2. La tabla completa de la rutina en Markdown.
+3. Un consejo de seguridad personalizado según las lesiones del usuario.
 
-Sé extremadamente motivador, Javi está empezando de cero pero es un guerrero.
-Responde en español.
+Sé extremadamente motivador. Responde en español.
 Fecha de hoy: {today}"""
 
-# Registro de herramientas
-TOOLS = [
-    get_user_profile,
-    get_recent_sessions,
-    get_week_frequency,
-    get_days_since_last_session,
-    get_recent_recommendations,
-    save_planned_workout,
-]
 
-def create_trainer_agent():
-    today = datetime.now().strftime("%Y-%m-%d")
+def create_trainer_agent(profile: dict, user_email: str):
+    """Crea el agente Entrenador con tools vinculadas al usuario."""
+    email = user_email  # capturado en closure
+
+    def get_user_profile() -> dict:
+        """Obtiene el perfil actual del usuario: nombre, peso, lesiones, objetivos."""
+        return db.get_user_profile(user_email=email)
+
+    def get_recent_sessions(limit: int = 10) -> list:
+        """Obtiene las últimas N sesiones de entrenamiento del usuario."""
+        return db.get_recent_sessions(limit=limit, user_email=email)
+
+    def get_week_frequency() -> dict:
+        """Obtiene cuántas sesiones ha hecho el usuario esta semana."""
+        return db.get_week_frequency(user_email=email)
+
+    def get_days_since_last_session() -> dict:
+        """Calcula cuántos días han pasado desde el último entrenamiento."""
+        days = db.get_days_since_last_session(user_email=email)
+        return {"days_since_last_session": days}
+
+    def get_recent_recommendations(limit: int = 5) -> list:
+        """Obtiene las últimas recomendaciones del analista para este usuario."""
+        return db.get_recent_recommendations(limit=limit, user_email=email)
+
+    def save_planned_workout(exercises: list, total_duration_minutes: int = 40, focus: str = "") -> dict:
+        """Guarda la rutina planificada para hoy en la base de datos.
+
+        Args:
+            exercises: Lista de ejercicios. Cada uno con: name, sets, reps, seconds.
+            total_duration_minutes: Duración total en minutos.
+            focus: Foco de la sesión (ej. 'Agarre y fuerza superior').
+        """
+        return db.save_planned_workout(exercises, total_duration_minutes, focus, user_email=email)
+
+    tools = [
+        get_user_profile,
+        get_recent_sessions,
+        get_week_frequency,
+        get_days_since_last_session,
+        get_recent_recommendations,
+        save_planned_workout,
+    ]
+
+    user_name = profile.get("name", "Usuario")
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        user_name=user_name,
+        age=profile.get("age", "?"),
+        weight=profile.get("current_weight", "?"),
+        injuries=profile.get("injuries", "Sin lesiones conocidas"),
+        goals=profile.get("goals", "Mejorar condición física"),
+        today=datetime.now().strftime("%Y-%m-%d"),
+    )
+
     return Agent(
         name="Entrenador",
-        system_prompt=SYSTEM_PROMPT.format(today=today),
-        tools=TOOLS,
-        model_id="gemini-2.5-flash"
+        system_prompt=system_prompt,
+        tools=tools,
+        model_id="gemini-2.5-flash",
     )

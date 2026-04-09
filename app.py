@@ -1,22 +1,27 @@
 """
 app.py - Interfaz Web Móvil (Streamlit) para Calistenia Coach
 
-Diseñada para que Javi la use desde su Pixel 10a en el parque.
-Protegida con Google OAuth — solo el email autorizado puede acceder.
+Multi-usuario con Google OAuth.
+- Cualquier cuenta Google puede registrarse.
+- Onboarding en primer acceso: nombre, edad, peso, lesiones, objetivo.
+- Cada usuario solo ve sus propios datos.
+- Panel Admin (solo carthagonova@gmail.com) para ver usuarios activos.
 """
 
 import streamlit as st
 import os
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
 # ─── CRÍTICO: cargar .env ANTES de importar nada que use credenciales ───
 load_dotenv(Path(__file__).parent / ".env")
 
-from database import init_db, get_user_profile
+from database import init_db, get_user_profile, save_user_profile, get_all_users_admin
 from agents import Orchestrator
 
-# Configuración de página
+ADMIN_EMAIL = "carthagonova@gmail.com"
+
 st.set_page_config(
     page_title="Calistenia Coach",
     page_icon="💪",
@@ -24,73 +29,135 @@ st.set_page_config(
 )
 
 # ─── AUTENTICACIÓN ────────────────────────────────────────────
-ALLOWED_EMAIL = os.getenv("ALLOWED_EMAIL", "")
-
 if not st.user.is_logged_in:
     st.title("💪 Calistenia Coach")
-    st.markdown("Tu entrenador personal con IA. Acceso privado.")
+    st.markdown("Tu entrenador personal con IA. Acceso con Google.")
     if st.button("Entrar con Google", type="primary", use_container_width=True):
         st.login("google")
     st.stop()
 
-if ALLOWED_EMAIL and st.user.email != ALLOWED_EMAIL:
-    st.error(f"Acceso no autorizado: {st.user.email}")
-    if st.button("Cerrar sesión"):
-        st.logout()
-    st.stop()
+user_email = st.user.email
+user_display = st.user.name or user_email
 
-# ─── INICIALIZACIÓN ───────────────────────────────────────────
+# ─── INICIALIZACIÓN DB ───────────────────────────────────────
 @st.cache_resource
 def init_app():
     init_db()
-    return Orchestrator()
 
 try:
-    orchestrator = init_app()
-    profile = get_user_profile()
+    init_app()
 except Exception as e:
     st.error(f"⚠️ Error al conectar con la base de datos: {e}")
-    st.info("Comprueba que SUPABASE_URL y SUPABASE_KEY están configuradas y que las tablas existen.")
     st.stop()
 
-# ─── HEADER / DASHBOARD ──────────────────────────────────────
-if profile:
-    col_title, col_logout = st.columns([4, 1])
-    with col_title:
-        st.title(f"💪 Hola, {profile['name']}!")
-    with col_logout:
-        st.write("")
-        if st.button("Salir", use_container_width=True):
-            st.logout()
+# ─── ONBOARDING (primer acceso) ──────────────────────────────
+profile = get_user_profile(user_email=user_email)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        current = profile.get('current_weight') or 0
-        initial = profile.get('initial_weight') or current
-        delta = round(current - initial, 1)
-        st.metric("Peso", f"{current} kg", delta=f"{delta} kg")
-    with col2:
-        st.metric("Objetivo", "10s Barra 🎯")
+if not profile:
+    st.title("👋 Bienvenido a Calistenia Coach")
+    st.markdown(f"Hola **{user_display}**, antes de empezar cuéntanos un poco sobre ti.")
 
-    st.info(f"📍 {profile.get('injuries', '')}")
-else:
-    st.warning("⚠️ Perfil no encontrado. Ejecuta el SQL en Supabase dashboard primero.")
+    with st.form("form_onboarding"):
+        name = st.text_input("¿Cómo quieres que te llamemos?",
+                             value=user_display.split()[0] if user_display else "")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            birth_year = st.number_input("Año de nacimiento",
+                                         min_value=1940, max_value=2015, value=1975, step=1)
+        with col_b:
+            weight = st.number_input("Peso actual (kg)",
+                                     min_value=30.0, max_value=300.0, value=75.0, step=0.5)
+        injuries = st.text_area(
+            "¿Tienes alguna lesión o condición física?",
+            placeholder="Ej: fascitis plantar, dolor de rodilla... (escribe 'ninguna' si estás bien)",
+            height=80,
+        )
+        goals = st.text_area(
+            "¿Cuál es tu objetivo principal?",
+            placeholder="Ej: perder peso, mejorar fuerza, hacer mi primera dominada...",
+            height=80,
+        )
+        submit = st.form_submit_button("🚀 Comenzar mi entrenamiento",
+                                       type="primary", use_container_width=True)
+
+    if submit:
+        if not name.strip():
+            st.error("Por favor escribe tu nombre.")
+        elif not goals.strip():
+            st.error("Por favor indica tu objetivo.")
+        else:
+            age = datetime.now().year - int(birth_year)
+            result = save_user_profile(
+                user_email=user_email,
+                name=name.strip(),
+                weight=float(weight),
+                age=age,
+                injuries=injuries.strip() or "Sin lesiones conocidas",
+                goals=goals.strip(),
+            )
+            if result.get("status") == "ok":
+                st.success("¡Perfil creado! Cargando tu entrenador...")
+                st.rerun()
+            else:
+                st.error(f"Error al guardar: {result.get('error')}")
     st.stop()
 
-# ─── ACCIONES PRINCIPALES ─────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["🔥 Mi Entrenamiento", "📈 Mi Progreso", "💬 Preguntar al Coach"])
+# ─── CARGAR ORQUESTADOR POR USUARIO ──────────────────────────
+@st.cache_resource
+def get_orchestrator(email: str, profile_id: int):
+    p = get_user_profile(user_email=email)
+    return Orchestrator(user_email=email, profile=p)
 
+try:
+    orchestrator = get_orchestrator(user_email, profile.get("id", 0))
+except Exception as e:
+    st.error(f"⚠️ Error al inicializar agentes: {e}")
+    st.stop()
+
+# ─── HEADER ──────────────────────────────────────────────────
+col_title, col_logout = st.columns([4, 1])
+with col_title:
+    st.title(f"💪 Hola, {profile['name']}!")
+with col_logout:
+    st.write("")
+    if st.button("Salir", use_container_width=True):
+        st.logout()
+
+col1, col2 = st.columns(2)
+with col1:
+    current = profile.get("current_weight") or 0
+    initial = profile.get("initial_weight") or current
+    delta = round(current - initial, 1)
+    st.metric("Peso", f"{current} kg", delta=f"{delta:+.1f} kg")
+with col2:
+    goals_text = profile.get("goals") or ""
+    goals_short = goals_text[:40] + ("..." if len(goals_text) > 40 else "")
+    st.metric("Objetivo", goals_short)
+
+if profile.get("injuries") and profile["injuries"] not in ("Sin lesiones conocidas", "ninguna"):
+    st.info(f"📍 {profile['injuries']}")
+
+# ─── TABS ────────────────────────────────────────────────────
+is_admin = (user_email == ADMIN_EMAIL)
+tab_names = ["🔥 Mi Entrenamiento", "📈 Mi Progreso", "💬 Preguntar al Coach"]
+if is_admin:
+    tab_names.append("🛡️ Admin")
+
+tabs = st.tabs(tab_names)
+tab1, tab2, tab3 = tabs[0], tabs[1], tabs[2]
+tab_admin = tabs[3] if is_admin else None
+
+# ─── TAB 1: ENTRENAMIENTO ─────────────────────────────────────
 with tab1:
     st.subheader("Tu rutina de hoy")
 
-    # ─── FORMULARIO PRE-ENTRENO ───────────────────────────────
     with st.form("form_rutina"):
         col_e, col_p = st.columns(2)
         with col_e:
             energia = st.slider("Nivel de energía", 1, 10, 7,
                                 help="1 = agotado, 10 = con mucha energía")
         with col_p:
-            dolor_pie = st.checkbox("Me duele el pie hoy", value=False)
+            dolor = st.checkbox("Me duele algo hoy", value=False)
 
         col_t, col_n = st.columns(2)
         with col_t:
@@ -98,24 +165,33 @@ with tab1:
                               index=1, horizontal=True)
         with col_n:
             nota_previa = st.text_input("Algo más que deba saber",
-                                        placeholder="Ej: dormí mal, me duele el hombro...")
+                                        placeholder="Ej: dormí mal, hombro molesto...")
 
-        generar = st.form_submit_button("🚀 Generar Rutina", use_container_width=True, type="primary")
+        peso_hoy = st.number_input(
+            "Peso hoy (kg)",
+            min_value=30.0, max_value=300.0,
+            value=float(profile.get("current_weight") or 75.0),
+            step=0.5,
+            help="Actualiza tu peso para un seguimiento preciso",
+        )
+
+        generar = st.form_submit_button("🚀 Generar Rutina",
+                                        use_container_width=True, type="primary")
 
     if generar:
-        # Construir contexto del estado de hoy
-        contexto_hoy = f"Nivel de energía de Javi hoy: {energia}/10."
-        if dolor_pie:
-            contexto_hoy += " AVISO: hoy tiene dolor en el pie — reducir volumen de piernas y extremar precauciones."
+        contexto = f"Nivel de energía hoy: {energia}/10."
+        if dolor:
+            contexto += " AVISO: el usuario reporta dolor hoy — adaptar ejercicios con precaución."
         else:
-            contexto_hoy += " El pie está bien hoy."
-        contexto_hoy += f" Tiempo disponible: {tiempo}."
+            contexto += " Sin dolor reportado hoy."
+        contexto += f" Tiempo disponible: {tiempo}."
         if nota_previa.strip():
-            contexto_hoy += f" Nota adicional: {nota_previa.strip()}."
+            contexto += f" Nota adicional: {nota_previa.strip()}."
+        contexto += f" Peso corporal hoy: {peso_hoy} kg."
 
-        with st.spinner("Diseñando tu entrenamiento seguro..."):
+        with st.spinner("Diseñando tu entrenamiento personalizado..."):
             try:
-                routine_md = orchestrator.get_workout_plan(context=contexto_hoy)
+                routine_md = orchestrator.get_workout_plan(context=contexto)
                 st.session_state["routine"] = routine_md
             except Exception as e:
                 st.error(f"Error: {e}")
@@ -125,25 +201,23 @@ with tab1:
 
     st.divider()
 
-    # ─── REPORTE (Voz o Texto) ────────────────────────────────
+    # ─── REPORTE ─────────────────────────────────────────────
     st.subheader("¿Cómo te ha ido hoy?")
-
     modo = st.radio("Modo de reporte:", ["🎤 Voz", "⌨️ Texto"], horizontal=True)
 
     if modo == "🎤 Voz":
         audio_file = st.audio_input("Graba tu reporte")
         if audio_file is not None:
             if st.button("📤 Enviar reporte", use_container_width=True, type="primary"):
-                with st.spinner("Gemini está escuchando tu reporte..."):
+                with st.spinner("Procesando tu reporte..."):
                     try:
                         from google.genai import types
                         audio_bytes = audio_file.read()
                         mime_type = getattr(audio_file, "type", None) or "audio/wav"
                         st.caption(f"Formato detectado: `{mime_type}`")
-
                         multimodal_input = [
                             types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
-                            "Soy Javi. Aquí tienes mi reporte de entrenamiento de hoy."
+                            "Aquí tienes mi reporte de entrenamiento de hoy."
                         ]
                         receptor_resp, analyst_resp = orchestrator.report_session(multimodal_input)
                         st.success("✅ Reporte guardado.")
@@ -155,10 +229,11 @@ with tab1:
     else:
         texto = st.text_area(
             "Escribe tu reporte:",
-            placeholder="Ej: 3 series de 10s colgado, 10 flexiones en banco, peso 134.5kg, me ha ido bien",
-            height=120
+            placeholder="Ej: 3 series de 10s colgado, 10 flexiones en banco, peso 74.5kg, me ha ido bien",
+            height=120,
         )
-        if st.button("📤 Enviar reporte", use_container_width=True, type="primary", disabled=not texto.strip()):
+        if st.button("📤 Enviar reporte", use_container_width=True, type="primary",
+                     disabled=not texto.strip()):
             with st.spinner("Procesando tu reporte..."):
                 try:
                     receptor_resp, analyst_resp = orchestrator.report_session(texto)
@@ -169,6 +244,7 @@ with tab1:
                 except Exception as e:
                     st.error(f"Error: {e}")
 
+# ─── TAB 3: COACH ────────────────────────────────────────────
 with tab3:
     st.subheader("Pregunta al Coach")
     st.caption("Técnica, dudas sobre ejercicios, adaptaciones para tu lesión...")
@@ -178,11 +254,12 @@ with tab3:
     if modo_coach == "⌨️ Texto":
         pregunta = st.text_area(
             "Tu pregunta:",
-            placeholder="Ej: ¿Cómo hago correctamente el remo australiano? ¿Qué hago si me duele el pie?",
+            placeholder="Ej: ¿Cómo hago correctamente el remo australiano?",
             height=100,
-            key="pregunta_coach"
+            key="pregunta_coach",
         )
-        if st.button("🤔 Preguntar", use_container_width=True, type="primary", disabled=not (pregunta or "").strip()):
+        if st.button("🤔 Preguntar", use_container_width=True, type="primary",
+                     disabled=not (pregunta or "").strip()):
             with st.spinner("El Coach está pensando..."):
                 try:
                     respuesta = orchestrator.ask_coach(pregunta)
@@ -192,7 +269,8 @@ with tab3:
     else:
         audio_coach = st.audio_input("Graba tu pregunta", key="audio_coach")
         if audio_coach is not None:
-            if st.button("🤔 Preguntar", use_container_width=True, type="primary", key="btn_coach_audio"):
+            if st.button("🤔 Preguntar", use_container_width=True, type="primary",
+                         key="btn_coach_audio"):
                 with st.spinner("El Coach está escuchando..."):
                     try:
                         from google.genai import types as gtypes
@@ -200,7 +278,7 @@ with tab3:
                         mime_type = getattr(audio_coach, "type", None) or "audio/wav"
                         multimodal = [
                             gtypes.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
-                            "Soy Javi. Tengo esta duda sobre mis ejercicios:"
+                            "Tengo esta duda sobre mis ejercicios:"
                         ]
                         respuesta = orchestrator.ask_coach(multimodal)
                         st.session_state["coach_resp"] = respuesta
@@ -210,6 +288,7 @@ with tab3:
     if "coach_resp" in st.session_state:
         st.markdown(st.session_state["coach_resp"])
 
+# ─── TAB 2: PROGRESO ─────────────────────────────────────────
 with tab2:
     st.subheader("Historial y Logros")
 
@@ -223,3 +302,39 @@ with tab2:
 
     if "progress" in st.session_state:
         st.markdown(st.session_state["progress"])
+
+# ─── TAB ADMIN (solo carthagonova@gmail.com) ─────────────────
+if is_admin and tab_admin is not None:
+    with tab_admin:
+        st.subheader("Panel de Administración")
+        st.caption(f"Acceso admin: {user_email}")
+
+        if st.button("🔄 Actualizar", use_container_width=True):
+            st.session_state.pop("admin_users", None)
+
+        if "admin_users" not in st.session_state:
+            with st.spinner("Cargando usuarios..."):
+                try:
+                    st.session_state["admin_users"] = get_all_users_admin()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    st.session_state["admin_users"] = []
+
+        users = st.session_state.get("admin_users", [])
+
+        if not users:
+            st.info("No hay usuarios registrados aún.")
+        else:
+            st.metric("Usuarios registrados", len(users))
+            st.divider()
+            for u in users:
+                col_n, col_e, col_s, col_l = st.columns([2, 3, 1, 2])
+                with col_n:
+                    st.write(f"**{u.get('name', '?')}**")
+                with col_e:
+                    st.write(u.get("user_email", "?"))
+                with col_s:
+                    st.write(f"{u.get('session_count', 0)} sesiones")
+                with col_l:
+                    last = u.get("last_session")
+                    st.write(f"Última: {last or 'Nunca'}")

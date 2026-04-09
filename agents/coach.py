@@ -1,47 +1,71 @@
 """
-coach.py - Agente Coach (Consultas sobre ejercicios)
+coach.py - Agente Coach (multi-usuario)
 
-Responde dudas de Javi sobre técnica, ejercicios, lesiones, etc.
-Tiene acceso al historial y perfil para dar respuestas personalizadas.
+Responde dudas sobre técnica, ejercicios, lesiones y recuperación.
 """
 
 from datetime import datetime
 from .base import Agent
-from database import get_user_profile, get_recent_sessions, get_recent_recommendations
+import database as db
 
-SYSTEM_PROMPT = """Eres el Coach Personal de Javi, un experto en calistenia y rehabilitación.
+SYSTEM_PROMPT_TEMPLATE = """Eres el Coach Personal de {user_name}, un experto en calistenia y rehabilitación.
 
-═══ PERFIL DE JAVI ═══
-- 56 años, 135 kg, fascitis plantar crónica (evitar impacto en planta del pie).
-- Objetivo: perder peso, colgarse 10 segundos en barra, mejorar agarre.
+═══ PERFIL DEL USUARIO ═══
+- {user_name}, {age} años, {weight} kg.
+- Lesiones / condiciones: {injuries}.
+- Objetivo: {goals}.
 - Entrena en gimnasio al aire libre con barras y bancos.
 
 ═══ TU MISIÓN ═══
-Responder dudas de Javi sobre:
+Responder dudas de {user_name} sobre:
 - Técnica correcta de ejercicios
-- Adaptaciones por su lesión de pie
+- Adaptaciones según sus lesiones
 - Por qué incluimos cada ejercicio
 - Alternativas si algo le duele o no puede hacerlo
 - Nutrición básica y recuperación
-- MANEJO ACTIVO DE FASCITIS: Proactivamente, refuerza la importancia de la adherencia a las estrategias de prevención y recuperación para la fascitis plantar (ej. uso de calzado adecuado, estiramientos, descanso activo). Conecta directamente la gestión de su lesión con el progreso hacia sus objetivos de agarre y pérdida de peso.
 
 ═══ REGLAS ═══
-- USA 'get_user_profile' para ver el estado actual de Javi.
+- USA 'get_user_profile' para ver el estado actual del usuario.
 - USA 'get_recent_sessions' para contextualizar la respuesta con su historial real.
 - Sé concreto, motivador y práctico. Sin rollos innecesarios.
-- Si la duda es sobre un ejercicio específico, explica: técnica, músculos, y adaptación para fascitis.
-- FOMENTA LA CONSTANCIA: Destaca que la consistencia, tanto en el entrenamiento como en la recuperación, es clave para superar la fascitis y lograr una progresión sostenida.
+- Si la duda es sobre un ejercicio específico, explica: técnica, músculos, y adaptación para sus lesiones.
+- Fomenta la constancia: la clave del progreso reside en la regularidad.
 - Responde siempre en español.
 
 Fecha de hoy: {today}"""
 
-TOOLS = [get_user_profile, get_recent_sessions, get_recent_recommendations]
 
-def create_coach_agent():
-    today = datetime.now().strftime("%Y-%m-%d")
+def create_coach_agent(profile: dict, user_email: str):
+    """Crea el agente Coach con tools vinculadas al usuario."""
+    email = user_email
+
+    def get_user_profile() -> dict:
+        """Obtiene el perfil actual del usuario: nombre, peso, lesiones, objetivos."""
+        return db.get_user_profile(user_email=email)
+
+    def get_recent_sessions(limit: int = 10) -> list:
+        """Obtiene las últimas N sesiones de entrenamiento del usuario."""
+        return db.get_recent_sessions(limit=limit, user_email=email)
+
+    def get_recent_recommendations(limit: int = 5) -> list:
+        """Obtiene las últimas recomendaciones del analista para este usuario."""
+        return db.get_recent_recommendations(limit=limit, user_email=email)
+
+    tools = [get_user_profile, get_recent_sessions, get_recent_recommendations]
+
+    user_name = profile.get("name", "Usuario")
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        user_name=user_name,
+        age=profile.get("age", "?"),
+        weight=profile.get("current_weight", "?"),
+        injuries=profile.get("injuries", "Sin lesiones conocidas"),
+        goals=profile.get("goals", "Mejorar condición física"),
+        today=datetime.now().strftime("%Y-%m-%d"),
+    )
+
     return Agent(
         name="Coach",
-        system_prompt=SYSTEM_PROMPT.format(today=today),
-        tools=TOOLS,
-        model_id="gemini-2.5-flash"
+        system_prompt=system_prompt,
+        tools=tools,
+        model_id="gemini-2.5-flash",
     )
