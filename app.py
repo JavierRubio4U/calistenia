@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 # ─── CRÍTICO: cargar .env ANTES de importar nada que use credenciales ───
 load_dotenv(Path(__file__).parent / ".env")
 
-from database import init_db, get_user_profile, save_user_profile, get_all_users_admin
+from database import init_db, get_user_profile, save_user_profile, get_all_users_admin, get_recent_recommendations
 from agents import Orchestrator
 
 ADMIN_EMAIL = "carthagonova@gmail.com"
@@ -139,13 +139,13 @@ if profile.get("injuries") and profile["injuries"] not in ("Sin lesiones conocid
 
 # ─── TABS ────────────────────────────────────────────────────
 is_admin = (user_email == ADMIN_EMAIL)
-tab_names = ["🔥 Mi Entrenamiento", "📈 Mi Progreso", "💬 Preguntar al Coach"]
+tab_names = ["🔥 Mi Entrenamiento", "📈 Mi Progreso", "📋 Recomendaciones", "💬 Preguntar al Coach"]
 if is_admin:
     tab_names.append("🛡️ Admin")
 
 tabs = st.tabs(tab_names)
-tab1, tab2, tab3 = tabs[0], tabs[1], tabs[2]
-tab_admin = tabs[3] if is_admin else None
+tab1, tab2, tab_rec, tab3 = tabs[0], tabs[1], tabs[2], tabs[3]
+tab_admin = tabs[4] if is_admin else None
 
 # ─── TAB 1: ENTRENAMIENTO ─────────────────────────────────────
 with tab1:
@@ -287,6 +287,32 @@ with tab3:
 
     if "coach_resp" in st.session_state:
         st.markdown(st.session_state["coach_resp"])
+
+# ─── TAB REC: RECOMENDACIONES DEL ANALISTA ───────────────────
+with tab_rec:
+    st.subheader("Recomendaciones del Analista")
+    st.caption("Lo que el Analista ha ido anotando para mejorar tu entrenamiento.")
+
+    col_r, col_refresh = st.columns([5, 1])
+    with col_refresh:
+        if st.button("🔄", help="Actualizar"):
+            st.session_state.pop("recomendaciones", None)
+
+    if "recomendaciones" not in st.session_state:
+        recs = get_recent_recommendations(limit=20, user_email=user_email)
+        st.session_state["recomendaciones"] = recs
+
+    recs = st.session_state.get("recomendaciones", [])
+
+    if not recs:
+        st.info("El Analista aún no ha generado recomendaciones. Envía al menos 3 reportes de sesión para activarlo.")
+    else:
+        for rec in recs:
+            date = rec.get("date", "")
+            text = rec.get("recommendation", "")
+            with st.container(border=True):
+                st.caption(f"📅 {date}")
+                st.markdown(text)
 
 # ─── TAB 2: PROGRESO ─────────────────────────────────────────
 with tab2:
