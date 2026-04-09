@@ -17,38 +17,12 @@ from dotenv import load_dotenv
 # ─── CRÍTICO: cargar .env ANTES de importar nada que use credenciales ───
 load_dotenv(Path(__file__).parent / ".env")
 
-from database import init_db, get_user_profile, save_user_profile, get_all_users_admin, get_recent_recommendations, get_exercise_history
+from database import init_db, get_user_profile, save_user_profile, get_all_users_admin, get_recent_recommendations
 from agents import Orchestrator
 
 ADMIN_EMAIL = "carthagonova@gmail.com"
 
-def get_current_milestone(user_email: str) -> str:
-    """Devuelve el siguiente hito de calistenia mezclando barra y push-ups."""
-    try:
-        def best(name, field):
-            h = get_exercise_history(name, user_email=user_email)
-            return max((e.get(field) or 0) for e in h) if h else 0
-
-        hang = best("Colgado en barra", "seconds")
-        pushups = max(
-            best("Flexiones inclinadas en banco", "reps"),
-            best("Flexiones en el suelo", "reps"),
-            best("Flexiones", "reps"),
-        )
-
-        # Progresión ordenada por dificultad — barra y push-ups entrelazados
-        if hang < 5:      return "Colgarme 5s en barra"
-        if pushups < 5:   return "5 flexiones seguidas"
-        if hang < 10:     return "Colgarme 10s en barra"
-        if pushups < 15:  return "15 flexiones seguidas"
-        if hang < 20:     return "Primera dominada completa"
-        if pushups < 25:  return "25 push-ups seguidos"
-        if hang < 30:     return "3 dominadas seguidas"
-        if pushups < 50:  return "50 push-ups sin parar"
-        if hang < 50:     return "5 dominadas seguidas"
-        return "Push-up a una mano (archer)"
-    except Exception:
-        return "Colgarme 5s en barra"
+MILESTONE_DEFAULT = "Colgarme 5s en barra"
 
 st.set_page_config(
     page_title="Calistenia Coach",
@@ -158,8 +132,9 @@ with col1:
     delta = round(current - initial, 1)
     st.metric("Peso", f"{current} kg", delta=f"{delta:+.1f} kg")
 with col2:
-    milestone = get_current_milestone(user_email)
-    st.metric("Objetivo", f"{milestone} 🎯")
+    milestone = profile.get("next_milestone") or MILESTONE_DEFAULT
+    st.markdown("**Objetivo**")
+    st.markdown(f"### {milestone} 🎯")
 
 if profile.get("injuries") and profile["injuries"] not in ("Sin lesiones conocidas", "ninguna"):
     st.info(f"📍 {profile['injuries']}")
