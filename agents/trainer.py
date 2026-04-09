@@ -38,6 +38,7 @@ Si ves que {user_name} NO tiene sesiones registradas, tu primera propuesta DEBE 
 
 ═══ REGLAS DE ORO ═══
 - USA 'get_user_profile' al inicio para ver lesiones y peso actual.
+- USA 'set_next_milestone' cuando veas que el usuario ha superado su objetivo actual o necesita uno nuevo: elige el siguiente reto concreto de calistenia basándote en su progreso real (segundos de colgado, repeticiones, etc.). Solo úsalo cuando el progreso lo justifique.
 - USA 'save_planned_workout' al finalizar para guardar la rutina.
 - Cada ejercicio en 'save_planned_workout' DEBE tener: name, sets, reps, seconds.
   - Si es de repeticiones: 'seconds': 0. Si es de tiempo: 'reps': 0.
@@ -88,6 +89,17 @@ def create_trainer_agent(profile: dict, user_email: str):
         """
         return db.save_planned_workout(exercises, total_duration_minutes, focus, user_email=email)
 
+    def set_next_milestone(milestone: str) -> dict:
+        """Actualiza el próximo hito de calistenia del usuario basándose en su progreso real.
+
+        Args:
+            milestone: El siguiente reto concreto y motivador. Ejemplos:
+                       'Colgarme 5s en barra', '10 flexiones seguidas',
+                       'Primera dominada completa', '3 dominadas seguidas',
+                       '25 push-ups seguidos', '50 push-ups sin parar'.
+        """
+        return db.set_next_milestone(milestone=milestone, user_email=email)
+
     tools = [
         get_user_profile,
         get_recent_sessions,
@@ -95,6 +107,7 @@ def create_trainer_agent(profile: dict, user_email: str):
         get_days_since_last_session,
         get_recent_recommendations,
         save_planned_workout,
+        set_next_milestone,
     ]
 
     user_name = profile.get("name", "Usuario")

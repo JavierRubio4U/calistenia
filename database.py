@@ -65,6 +65,18 @@ def save_user_profile(user_email: str, name: str, weight: float, age: int,
         return {"error": str(e)}
 
 
+def set_next_milestone(milestone: str, user_email: str = None) -> Dict[str, Any]:
+    """Guarda el próximo hito de calistenia para el usuario."""
+    if not supabase:
+        return {}
+    profile = get_user_profile(user_email)
+    if profile:
+        supabase.table("user_profile").update(
+            {"next_milestone": milestone}
+        ).eq("id", profile["id"]).execute()
+    return {"status": "ok", "next_milestone": milestone}
+
+
 def update_user_weight(new_weight: float, user_email: str = None) -> Dict[str, Any]:
     """Actualiza el peso actual (kg) en el perfil."""
     if not supabase:
