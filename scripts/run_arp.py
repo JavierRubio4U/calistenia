@@ -11,8 +11,12 @@ Uso:
 """
 
 import sys
+import io
 from pathlib import Path
 from dotenv import load_dotenv
+
+# Forzar UTF-8 en la salida estándar (Windows cp1252 no soporta todos los caracteres)
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))

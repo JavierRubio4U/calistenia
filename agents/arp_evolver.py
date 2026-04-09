@@ -6,7 +6,7 @@ los system prompts de los agentes para mejorar el sistema autónomamente.
 """
 
 from .base import Agent
-from database import get_all_sessions, get_recent_recommendations, save_recommendation
+import database as db
 from .agent_manager import read_agent_prompt, update_agent_prompt
 
 
@@ -67,6 +67,23 @@ Usa save_recommendation() con un resumen de:
 ### Resultado
 [Una frase sobre el impacto esperado de los cambios]
 """
+
+    # Wrappers sin user_email para no confundir a Gemini
+    def get_all_sessions() -> list:
+        """Obtiene todas las sesiones de entrenamiento de todos los usuarios."""
+        return db.get_all_sessions()
+
+    def get_recent_recommendations(limit: int = 10) -> list:
+        """Obtiene las últimas N recomendaciones guardadas en el sistema."""
+        return db.get_recent_recommendations(limit=limit)
+
+    def save_recommendation(recommendation: str) -> dict:
+        """Guarda un resumen del ciclo ARP como recomendación del sistema.
+
+        Args:
+            recommendation: Texto con el resumen del ciclo: problemas detectados, agentes modificados y cambios aplicados.
+        """
+        return db.save_recommendation(recommendation=recommendation)
 
     return Agent(
         name="ARP Evolver",
