@@ -22,33 +22,33 @@ from agents import Orchestrator
 
 ADMIN_EMAIL = "carthagonova@gmail.com"
 
-# Progresión de hitos de calistenia por segundos de colgado
-CALISTENIA_MILESTONES = [
-    (0,  "Colgarme 5s en barra"),
-    (5,  "Colgarme 10s en barra"),
-    (10, "Primera dominada completa"),
-    (15, "3 dominadas seguidas"),
-    (25, "5 dominadas seguidas"),
-    (40, "Dominadas con lastre"),
-]
-
 def get_current_milestone(user_email: str) -> str:
-    """Devuelve el siguiente hito de calistenia según el mejor colgado registrado."""
+    """Devuelve el siguiente hito de calistenia mezclando barra y push-ups."""
     try:
-        history = get_exercise_history("Colgado en barra", user_email=user_email)
-        if not history:
-            return CALISTENIA_MILESTONES[0][1]
-        best_seconds = max((e.get("seconds") or 0) for e in history)
-        # Devolver el primer hito que aún no ha superado
-        for threshold, label in reversed(CALISTENIA_MILESTONES):
-            if best_seconds >= threshold:
-                # Apuntar al siguiente
-                idx = CALISTENIA_MILESTONES.index((threshold, label))
-                next_idx = min(idx + 1, len(CALISTENIA_MILESTONES) - 1)
-                return CALISTENIA_MILESTONES[next_idx][1]
-        return CALISTENIA_MILESTONES[0][1]
+        def best(name, field):
+            h = get_exercise_history(name, user_email=user_email)
+            return max((e.get(field) or 0) for e in h) if h else 0
+
+        hang = best("Colgado en barra", "seconds")
+        pushups = max(
+            best("Flexiones inclinadas en banco", "reps"),
+            best("Flexiones en el suelo", "reps"),
+            best("Flexiones", "reps"),
+        )
+
+        # Progresión ordenada por dificultad — barra y push-ups entrelazados
+        if hang < 5:      return "Colgarme 5s en barra"
+        if pushups < 5:   return "5 flexiones seguidas"
+        if hang < 10:     return "Colgarme 10s en barra"
+        if pushups < 15:  return "15 flexiones seguidas"
+        if hang < 20:     return "Primera dominada completa"
+        if pushups < 25:  return "25 push-ups seguidos"
+        if hang < 30:     return "3 dominadas seguidas"
+        if pushups < 50:  return "50 push-ups sin parar"
+        if hang < 50:     return "5 dominadas seguidas"
+        return "Push-up a una mano (archer)"
     except Exception:
-        return CALISTENIA_MILESTONES[0][1]
+        return "Colgarme 5s en barra"
 
 st.set_page_config(
     page_title="Calistenia Coach",
