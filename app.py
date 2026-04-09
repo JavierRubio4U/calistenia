@@ -17,10 +17,38 @@ from dotenv import load_dotenv
 # ─── CRÍTICO: cargar .env ANTES de importar nada que use credenciales ───
 load_dotenv(Path(__file__).parent / ".env")
 
-from database import init_db, get_user_profile, save_user_profile, get_all_users_admin, get_recent_recommendations
+from database import init_db, get_user_profile, save_user_profile, get_all_users_admin, get_recent_recommendations, get_exercise_history
 from agents import Orchestrator
 
 ADMIN_EMAIL = "carthagonova@gmail.com"
+
+# Progresión de hitos de calistenia por segundos de colgado
+CALISTENIA_MILESTONES = [
+    (0,  "Colgarme 5s en barra"),
+    (5,  "Colgarme 10s en barra"),
+    (10, "Primera dominada completa"),
+    (15, "3 dominadas seguidas"),
+    (25, "5 dominadas seguidas"),
+    (40, "Dominadas con lastre"),
+]
+
+def get_current_milestone(user_email: str) -> str:
+    """Devuelve el siguiente hito de calistenia según el mejor colgado registrado."""
+    try:
+        history = get_exercise_history("Colgado en barra", user_email=user_email)
+        if not history:
+            return CALISTENIA_MILESTONES[0][1]
+        best_seconds = max((e.get("seconds") or 0) for e in history)
+        # Devolver el primer hito que aún no ha superado
+        for threshold, label in reversed(CALISTENIA_MILESTONES):
+            if best_seconds >= threshold:
+                # Apuntar al siguiente
+                idx = CALISTENIA_MILESTONES.index((threshold, label))
+                next_idx = min(idx + 1, len(CALISTENIA_MILESTONES) - 1)
+                return CALISTENIA_MILESTONES[next_idx][1]
+        return CALISTENIA_MILESTONES[0][1]
+    except Exception:
+        return CALISTENIA_MILESTONES[0][1]
 
 st.set_page_config(
     page_title="Calistenia Coach",
@@ -130,11 +158,8 @@ with col1:
     delta = round(current - initial, 1)
     st.metric("Peso", f"{current} kg", delta=f"{delta:+.1f} kg")
 with col2:
-    goals_text = profile.get("goals") or ""
-    # Mostrar solo la primera frase/cláusula del objetivo
-    first_clause = goals_text.split(",")[0].split(".")[0].strip()
-    goals_display = first_clause[:30] + ("..." if len(first_clause) > 30 else "")
-    st.metric("Objetivo", goals_display + " 🎯")
+    milestone = get_current_milestone(user_email)
+    st.metric("Objetivo", f"{milestone} 🎯")
 
 if profile.get("injuries") and profile["injuries"] not in ("Sin lesiones conocidas", "ninguna"):
     st.info(f"📍 {profile['injuries']}")
