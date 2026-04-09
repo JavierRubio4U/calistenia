@@ -131,14 +131,16 @@ with col1:
     st.metric("Peso", f"{current} kg", delta=f"{delta:+.1f} kg")
 with col2:
     goals_text = profile.get("goals") or ""
-    goals_short = goals_text[:40] + ("..." if len(goals_text) > 40 else "")
-    st.metric("Objetivo", goals_short)
+    # Mostrar solo la primera frase/cláusula del objetivo
+    first_clause = goals_text.split(",")[0].split(".")[0].strip()
+    goals_display = first_clause[:30] + ("..." if len(first_clause) > 30 else "")
+    st.metric("Objetivo", goals_display + " 🎯")
 
 if profile.get("injuries") and profile["injuries"] not in ("Sin lesiones conocidas", "ninguna"):
     st.info(f"📍 {profile['injuries']}")
 
 # ─── TABS ────────────────────────────────────────────────────
-is_admin = (user_email == ADMIN_EMAIL)
+is_admin = (user_email.lower() == ADMIN_EMAIL.lower())
 tab_names = ["🔥 Mi Entrenamiento", "📈 Mi Progreso", "📋 Recomendaciones", "💬 Preguntar al Coach"]
 if is_admin:
     tab_names.append("🛡️ Admin")
@@ -299,8 +301,10 @@ with tab_rec:
             st.session_state.pop("recomendaciones", None)
 
     if "recomendaciones" not in st.session_state:
-        recs = get_recent_recommendations(limit=20, user_email=user_email)
-        st.session_state["recomendaciones"] = recs
+        all_recs = get_recent_recommendations(limit=30, user_email=user_email)
+        # Filtrar informes internos del ARP (son para el sistema, no para el usuario)
+        analyst_recs = [r for r in all_recs if not r.get("recommendation", "").startswith("## Ciclo ARP")]
+        st.session_state["recomendaciones"] = analyst_recs[:20]
 
     recs = st.session_state.get("recomendaciones", [])
 
