@@ -30,10 +30,20 @@ def read_agent_prompt(agent_name: str) -> dict:
 
     content = path.read_text(encoding="utf-8")
 
-    # Extraer el SYSTEM_PROMPT o system_prompt de la variable
-    match = re.search(r'SYSTEM_PROMPT\s*=\s*"""(.*?)"""', content, re.DOTALL)
-    if not match:
-        match = re.search(r'system_prompt\s*=\s*f?"""(.*?)"""', content, re.DOTALL)
+    # Intentar varios patrones de nombre de variable
+    patterns = [
+        r'SYSTEM_PROMPT_TEMPLATE\s*=\s*"""(.*?)"""',
+        r'SYSTEM_PROMPT\s*=\s*"""(.*?)"""',
+        r'system_prompt\s*=\s*f?"""(.*?)"""',
+    ]
+    match = None
+    matched_pattern = None
+    for p in patterns:
+        match = re.search(p, content, re.DOTALL)
+        if match:
+            matched_pattern = p
+            break
+
     if not match:
         return {"error": f"No se encontró SYSTEM_PROMPT en {path.name}"}
 
@@ -58,16 +68,21 @@ def update_agent_prompt(agent_name: str, new_prompt: str, reason: str) -> dict:
 
     content = path.read_text(encoding="utf-8")
 
-    # Reemplazar SYSTEM_PROMPT = """..."""
-    pattern = r'(SYSTEM_PROMPT\s*=\s*""").*?(""")'
-    new_content = re.sub(pattern, rf'\g<1>{new_prompt}\g<2>', content, flags=re.DOTALL)
+    # Intentar reemplazar en orden de prioridad
+    replaced = False
+    new_content = content
+    for pattern in [
+        r'(SYSTEM_PROMPT_TEMPLATE\s*=\s*""").*?(""")',
+        r'(SYSTEM_PROMPT\s*=\s*""").*?(""")',
+        r'(system_prompt\s*=\s*f?""").*?(""")',
+    ]:
+        candidate = re.sub(pattern, rf'\g<1>{new_prompt}\g<2>', content, flags=re.DOTALL)
+        if candidate != content:
+            new_content = candidate
+            replaced = True
+            break
 
-    if new_content == content:
-        # Intentar con system_prompt minúscula
-        pattern = r'(system_prompt\s*=\s*f?""").*?(""")'
-        new_content = re.sub(pattern, rf'\g<1>{new_prompt}\g<2>', content, flags=re.DOTALL)
-
-    if new_content == content:
+    if not replaced:
         return {"error": f"No se pudo reemplazar el prompt en {path.name}"}
 
     path.write_text(new_content, encoding="utf-8")

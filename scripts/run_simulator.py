@@ -123,7 +123,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"  ARP SIMULATOR")
     print(f"  Usuario: {user_profile.get('name')} ({user_email})")
-    print(f"  Periodo: {args.start} → {args.days} días")
+    print(f"  Periodo: {args.start} -> {args.days} dias")
     print(f"{'='*60}\n")
 
     existing = {s["date"] for s in get_all_sessions(user_email=user_email)}
