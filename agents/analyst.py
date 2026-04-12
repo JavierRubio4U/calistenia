@@ -74,5 +74,5 @@ def create_analyst_agent(profile: dict, user_email: str):
         name="Analista",
         system_prompt=system_prompt,
         tools=tools,
-        model_id="gemini-2.5-flash",
+        model_id="gemini-2.5-pro",
     )

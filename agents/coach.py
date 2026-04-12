@@ -68,5 +68,5 @@ def create_coach_agent(profile: dict, user_email: str):
         name="Coach",
         system_prompt=system_prompt,
         tools=tools,
-        model_id="gemini-2.5-flash",
+        model_id="gemini-2.5-pro",
     )

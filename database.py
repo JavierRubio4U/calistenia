@@ -40,7 +40,8 @@ def get_user_profile(user_email: str = None) -> Dict[str, Any]:
 
 
 def save_user_profile(user_email: str, name: str, weight: float, age: int,
-                      injuries: str = "", goals: str = "") -> Dict[str, Any]:
+                      injuries: str = "", goals: str = "",
+                      home_equipment: str = "") -> Dict[str, Any]:
     """Crea o actualiza el perfil de un usuario (onboarding)."""
     if not supabase:
         return {"error": "Supabase no inicializado"}
@@ -54,6 +55,7 @@ def save_user_profile(user_email: str, name: str, weight: float, age: int,
             "current_weight": weight,
             "injuries": injuries,
             "goals": goals,
+            "home_equipment": home_equipment or "",
             "last_updated": "now()",
         }
         if existing.data:

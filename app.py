@@ -79,6 +79,10 @@ if not profile:
             placeholder="Ej: perder peso, mejorar fuerza, hacer mi primera dominada...",
             height=80,
         )
+        home_equipment = st.text_input(
+            "¿Qué material tienes en casa para entrenar? (opcional)",
+            placeholder="Ej: mancuernas hasta 12 kg y esterilla, bandas elásticas, barra dominadas...",
+        )
         submit = st.form_submit_button("🚀 Comenzar mi entrenamiento",
                                        type="primary", use_container_width=True)
 
@@ -96,6 +100,7 @@ if not profile:
                 age=age,
                 injuries=injuries.strip() or "Sin lesiones conocidas",
                 goals=goals.strip(),
+                home_equipment=home_equipment.strip(),
             )
             if result.get("status") == "ok":
                 st.success("¡Perfil creado! Cargando tu entrenador...")
@@ -117,9 +122,50 @@ except Exception as e:
     st.stop()
 
 # ─── HEADER ──────────────────────────────────────────────────
-col_title, col_logout = st.columns([4, 1])
+col_title, col_profile, col_logout = st.columns([4, 1, 1])
 with col_title:
     st.title(f"💪 Hola, {profile['name']}!")
+with col_profile:
+    st.write("")
+    with st.popover("👤", use_container_width=True):
+        st.markdown(f"**{profile['name']}** · {user_email}")
+        st.divider()
+        with st.form("form_perfil"):
+            p_name = st.text_input("Nombre", value=profile.get("name", ""))
+            p_birth = st.number_input("Año de nacimiento",
+                                      min_value=1940, max_value=2015,
+                                      value=datetime.now().year - int(profile.get("age") or 40),
+                                      step=1)
+            p_weight = st.number_input("Peso actual (kg)",
+                                       min_value=30.0, max_value=300.0,
+                                       value=float(profile.get("current_weight") or 75.0),
+                                       step=0.5)
+            p_injuries = st.text_area("Lesiones / condiciones",
+                                      value=profile.get("injuries", ""),
+                                      height=70)
+            p_goals = st.text_area("Objetivo principal",
+                                   value=profile.get("goals", ""),
+                                   height=70)
+            p_equipment = st.text_input("Material en casa",
+                                        value=profile.get("home_equipment", ""),
+                                        placeholder="Ej: mancuernas hasta 12kg, esterilla, bandas")
+            if st.form_submit_button("💾 Guardar cambios", use_container_width=True, type="primary"):
+                p_age = datetime.now().year - int(p_birth)
+                res = save_user_profile(
+                    user_email=user_email,
+                    name=p_name.strip(),
+                    weight=float(p_weight),
+                    age=p_age,
+                    injuries=p_injuries.strip() or "Sin lesiones conocidas",
+                    goals=p_goals.strip(),
+                    home_equipment=p_equipment.strip(),
+                )
+                if res.get("status") == "ok":
+                    st.success("✅ Perfil actualizado")
+                    st.cache_resource.clear()
+                    st.rerun()
+                else:
+                    st.error(f"Error: {res.get('error')}")
 with col_logout:
     st.write("")
     if st.button("Salir", use_container_width=True):
@@ -154,20 +200,24 @@ with tab1:
     st.subheader("Tu rutina de hoy")
 
     with st.form("form_rutina"):
-        col_e, col_p = st.columns(2)
+        lugar = st.radio(
+            "¿Dónde entrenas hoy?",
+            ["🌳 Parque / Calistenia", "🏠 Casa"],
+            horizontal=True,
+        )
+
+        col_e, col_t = st.columns(2)
         with col_e:
             energia = st.slider("Nivel de energía", 1, 10, 7,
                                 help="1 = agotado, 10 = con mucha energía")
-        with col_p:
-            dolor = st.checkbox("Me duele algo hoy", value=False)
-
-        col_t, col_n = st.columns(2)
         with col_t:
             tiempo = st.radio("Tiempo disponible", ["30 min", "40 min", "60 min"],
                               index=1, horizontal=True)
-        with col_n:
-            nota_previa = st.text_input("Algo más que deba saber",
-                                        placeholder="Ej: dormí mal, hombro molesto...")
+
+        nota_previa = st.text_input(
+            "¿Algo que deba saber hoy?",
+            placeholder="Ej: dormí mal, me duele el hombro, tengo prisa..."
+        )
 
         peso_hoy = st.number_input(
             "Peso hoy (kg)",
@@ -181,11 +231,9 @@ with tab1:
                                         use_container_width=True, type="primary")
 
     if generar:
-        contexto = f"Nivel de energía hoy: {energia}/10."
-        if dolor:
-            contexto += " AVISO: el usuario reporta dolor hoy — adaptar ejercicios con precaución."
-        else:
-            contexto += " Sin dolor reportado hoy."
+        lugar_limpio = "Casa" if lugar == "🏠 Casa" else "Parque / Calistenia"
+        contexto = f"LUGAR HOY: {lugar_limpio}."
+        contexto += f" Nivel de energía hoy: {energia}/10."
         contexto += f" Tiempo disponible: {tiempo}."
         if nota_previa.strip():
             contexto += f" Nota adicional: {nota_previa.strip()}."
