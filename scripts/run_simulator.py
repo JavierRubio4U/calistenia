@@ -48,27 +48,69 @@ def build_week_profiles(profile: dict) -> list:
     ]
 
 
+LOCATION_CYCLE = [
+    "parque", "parque", "casa",   # semana 1: 2 parque, 1 casa
+    "parque", "casa",  "parque",  # semana 2: 2 parque, 1 casa
+    "parque", "parque", "casa",   # semana 3
+    "casa",   "parque", "parque", # semana 4
+]
+
+SCENARIO_NOTES = [
+    "",
+    "dormí mal",
+    "me duele un poco el talón",
+    "",
+    "hoy tengo mucha energía",
+    "hombro un poco molesto",
+    "",
+    "cansado pero quiero entrenar",
+    "",
+    "me duele el pie",
+    "",
+    "excelente día, máxima energía",
+]
+
+
 def generate_session_data(client, date: str, week: int, week_profile: dict,
-                          session_num: int, user_profile: dict) -> dict:
+                          session_num: int, user_profile: dict,
+                          session_index: int = 0) -> dict:
     """Pide a Gemini los datos de UNA sesión concreta. Sin tools."""
 
     name = user_profile.get("name", "el usuario")
     age = user_profile.get("age", 40)
     injuries = user_profile.get("injuries", "sin lesiones")
     goals = user_profile.get("goals", "mejorar condición física")
+    home_eq = user_profile.get("home_equipment", "mancuernas y esterilla")
 
-    prompt = f"""Genera los datos de UNA sesión de entrenamiento de calistenia para {name}.
+    location = LOCATION_CYCLE[session_index % len(LOCATION_CYCLE)]
+    nota = SCENARIO_NOTES[session_index % len(SCENARIO_NOTES)]
+    energia = 4 if "cansado" in nota or "dormí mal" in nota else (9 if "mucha energía" in nota or "excelente" in nota else 7)
+    hay_dolor = "duele" in nota or "molesto" in nota
+
+    if location == "casa":
+        ejercicios_pool = "Press de suelo c/mancuernas, Flexiones, Remo c/mancuerna, Press militar, Extensión de tríceps, Sentadilla goblet, Zancadas c/mancuernas, Peso muerto rumano, Elevación de talones, Plancha, Curl de bíceps, Dead bug"
+        contexto_loc = f"SESIÓN EN CASA con {home_eq}."
+    else:
+        ejercicios_pool = "Colgado en barra, Flexiones inclinadas en banco, Remo australiano, Sentadilla al banco, Plancha, Sentadilla isométrica pared, Pino contra pared"
+        contexto_loc = "SESIÓN EN PARQUE (calistenia al aire libre)."
+
+    prompt = f"""Genera los datos de UNA sesión de entrenamiento para {name}.
 
 PERFIL: {age} años, {week_profile['weight']} kg, {injuries}.
 OBJETIVO: {goals}
 FECHA: {date} ({week_profile['label']}, sesión {session_num} de la semana)
-VALORES BASE: Colgado {week_profile['hang_s']}s, Flexiones {week_profile['push_reps']} reps, Remo {week_profile['row_reps']} reps
+{contexto_loc}
+ESTADO HOY: Energía {energia}/10. {'Dolor/molestia: ' + nota if hay_dolor else 'Sin dolor.'} {('Nota: ' + nota) if nota and not hay_dolor else ''}
+VALORES BASE: Colgado/Hold {week_profile['hang_s']}s, Flexiones {week_profile['push_reps']} reps, Remo {week_profile['row_reps']} reps
 
-VARIACIÓN REALISTA:
-- Con un 25% de probabilidad: dolor leve → reduce volumen un 20%, añade nota
-- Con un 15% de probabilidad: día con mucha energía → añade una serie extra
-- La fatiga debe estar entre 3 y 8
-- Elige 3-5 ejercicios de: Colgado en barra, Flexiones inclinadas en banco, Remo australiano, Sentadilla al banco, Plancha, Sentadilla isométrica pared
+EJERCICIOS DISPONIBLES: {ejercicios_pool}
+
+INSTRUCCIONES:
+- Elige 4-6 ejercicios del pool disponible
+- Si hay dolor, reduce volumen un 20% y añade nota de adaptación
+- Si energía >= 8, añade una serie extra en el ejercicio principal
+- Si es sesión de casa, incluye al menos 1 ejercicio de core y 1 de flexibilidad (seconds > 0)
+- La fatiga final debe ser coherente con la energía inicial y el volumen
 
 Devuelve SOLO un JSON válido con esta estructura exacta:
 {{
@@ -78,8 +120,9 @@ Devuelve SOLO un JSON válido con esta estructura exacta:
   ],
   "weight": {week_profile['weight']},
   "fatigue_level": 5,
-  "notes": "buena sesión",
-  "duration_minutes": 40
+  "notes": "{nota or 'buena sesión'}",
+  "duration_minutes": 40,
+  "location": "{location}"
 }}"""
 
     response = client.models.generate_content(
@@ -144,7 +187,7 @@ def main():
         session_num = (i % 3) + 1
 
         try:
-            data = generate_session_data(client, date, week_idx + 1, wp, session_num, user_profile)
+            data = generate_session_data(client, date, week_idx + 1, wp, session_num, user_profile, session_index=i)
             result = save_session(
                 date=date,
                 exercises=data["exercises"],
