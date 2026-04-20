@@ -290,6 +290,27 @@ def save_planned_workout(exercises: List[dict], total_duration_minutes: int = 40
         return {"error": str(e)}
 
 
+def get_planned_workout(user_email: str = None) -> dict:
+    """Obtiene la rutina planificada para hoy si existe."""
+    if not supabase:
+        return {}
+    today = datetime.now().strftime("%Y-%m-%d")
+    q = supabase.table("planned_workouts").select("*").eq("date", today)
+    if user_email:
+        q = q.eq("user_email", user_email)
+    res = q.order("id", desc=True).limit(1).execute()
+    if not res.data:
+        return {}
+    row = res.data[0]
+    exercises = json.loads(row.get("exercises_json") or "[]")
+    return {
+        "date": row["date"],
+        "focus": row.get("focus", ""),
+        "total_duration_minutes": row.get("total_duration_minutes", 40),
+        "exercises": exercises,
+    }
+
+
 # ─── RECOMENDACIONES ─────────────────────────────────────────────────────────
 
 def save_recommendation(recommendation: str, user_email: str = None) -> Dict[str, Any]:

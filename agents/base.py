@@ -91,7 +91,8 @@ class Agent:
 
                 # Obtener las partes de la respuesta del modelo
                 candidate = response.candidates[0]
-                model_parts = candidate.content.parts
+                content = candidate.content if candidate else None
+                model_parts = (content.parts if content else None) or []
 
                 # Separar tool calls de texto
                 tool_calls = [p for p in model_parts if p.function_call is not None]
@@ -101,7 +102,13 @@ class Agent:
                     # Sin tool calls → respuesta final
                     if self.response_schema:
                         return response.parsed if hasattr(response, 'parsed') and response.parsed else response.text
-                    return response.text
+                    text = response.text
+                    if not text and text_parts:
+                        text = "\n".join(p.text for p in text_parts)
+                    if not text:
+                        finish = candidate.finish_reason if candidate else "UNKNOWN"
+                        raise ValueError(f"El modelo no generó respuesta (finish_reason={finish}). Puede que el modelo no esté disponible con esta API key.")
+                    return text
 
                 # Hay tool calls: ejecutarlos todos y continuar
                 print(f"  [{self.name}] Tool calls: {[p.function_call.name for p in tool_calls]}")
