@@ -1,9 +1,10 @@
 # 💪 Calistenia Coach — Sistema Multi-Agente con IA
 
 > Entrenador personal adaptativo construido con **programación agéntica**.  
-> Aprende de cada sesión de Javi y ajusta las rutinas automáticamente.
+> Aprende de cada sesión y ajusta las rutinas automáticamente según historial real.
 
-**🌐 App en producción:** https://calistenia-coach-8285977376.europe-west1.run.app
+**🤖 Bot Telegram:** `@CalisteniaCoachBot` (interfaz principal)  
+**🌐 Panel Admin:** https://calistenia-coach-8285977376.europe-west1.run.app
 
 ---
 
@@ -46,20 +47,25 @@ a través de herramientas (tools), decidiendo autónomamente qué hacer y cuánd
 
 ```mermaid
 graph TD
-    U["👤 Javi<br/>(voz o texto)"]
+    U["👤 Usuario<br/>(voz o texto)"]
+
+    subgraph TG["📱 Telegram Bot · Cloud Run"]
+        B["telegram_bot.py<br/>Interfaz principal · min-instances=1"]
+    end
 
     subgraph APP["🌐 Streamlit · Cloud Run"]
-        A["app.py<br/>Interfaz Web Móvil"]
+        A["app.py<br/>Panel de admin (OAuth Google)"]
     end
 
     subgraph ORQUESTADOR["🎯 Orchestrator"]
         O["orchestrator.py<br/>Coordinación determinista"]
     end
 
-    subgraph AGENTES["🤖 Agentes Gemini 2.5 Flash"]
-        R["📥 Receptor<br/>Parsea reportes<br/>→ datos estructurados"]
-        T["🏋️ Entrenador<br/>Diseña rutinas 40min<br/>impacto cero"]
-        AN["📊 Analista<br/>Detecta progreso<br/>genera recomendaciones"]
+    subgraph AGENTES["🤖 Agentes Gemini"]
+        R["📥 Receptor · Flash\nParsea reportes\n→ datos estructurados"]
+        T["🏋️ Entrenador · Pro\nDiseña rutinas\nimpacto cero"]
+        AN["📊 Analista · Pro\nDetecta progreso\ngenera recomendaciones"]
+        C["💬 Coach · Pro\nResponde dudas\nde técnica y lesiones"]
     end
 
     subgraph DB["🗄️ Supabase · PostgreSQL"]
@@ -70,11 +76,14 @@ graph TD
         S5["user_profile"]
     end
 
-    U -->|"voz/texto"| A
+    U -->|"texto o audio .ogg"| B
+    B --> O
+    U -->|"admin"| A
     A --> O
     O -->|"reporte"| R
     O -->|"pedir rutina"| T
     O -->|"ver progreso"| AN
+    O -->|"pregunta técnica"| C
 
     R -->|"save_session()"| S1
     R -->|"save_exercises()"| S2
@@ -88,144 +97,134 @@ graph TD
 
 ---
 
+## 📱 Interfaz: Bot de Telegram
+
+El bot es la interfaz principal. Funciona con comandos y botones de teclado:
+
+```
+/start · /menu   → Menú con 4 botones
+/rutina          → Pregunta dónde entrenas (Parque / Casa) y genera rutina
+/progreso        → Análisis de evolución con el Analista
+/coach           → Modo consulta técnica (texto o audio)
+/admin           → Resumen de usuarios registrados (solo admin)
+Texto libre      → Receptor: registra la sesión de entrenamiento
+Audio .ogg       → Receptor (multimodal): Gemini procesa el audio directamente
+```
+
+**Formato de rutina en Telegram:**
+```
+💪 ¡A por ello!
+
+🏋️ *Colgado en barra* — 3×10s — 90s
+🏋️ *Remo australiano* — 3×8 — 90s
+🏋️ *Flexiones inclinadas* — 3×10 — 60s
+🏋️ *Plancha frontal* — 3×30s — 60s
+
+📖 *Remo australiano*
+Qué es: Jalón horizontal con peso corporal desde barra baja.
+Cómo: 1) Agarra barra a la altura de la cadera 2) Cuerpo recto 3) Tira del pecho a la barra
+✅ Codos cerca del cuerpo · ❌ No dejes caer las caderas
+```
+
+---
+
 ## 🔄 Flujos Principales
 
 ### 1. Pedir rutina de hoy
 ```mermaid
 sequenceDiagram
     actor Javi
-    participant App
+    participant Bot
     participant Entrenador
     participant Supabase
 
-    Javi->>App: "Generar Rutina"
-    App->>Entrenador: run("Diseña rutina de hoy")
-    Entrenador->>Supabase: get_user_profile()
-    Supabase-->>Entrenador: {name: Javi, weight: 135, injuries: fascitis}
+    Javi->>Bot: /rutina → "Parque"
+    Bot->>Entrenador: run("LUGAR HOY: Parque. Diseña rutina")
     Entrenador->>Supabase: get_recent_sessions(10)
     Supabase-->>Entrenador: [sesiones anteriores...]
     Entrenador->>Supabase: get_week_frequency()
     Supabase-->>Entrenador: {sessions_this_week: 2}
+    Entrenador->>Supabase: get_days_since_last_session()
+    Supabase-->>Entrenador: {days: 1}
     Entrenador->>Supabase: get_recent_recommendations()
     Supabase-->>Entrenador: [consejos del analista...]
-    Note over Entrenador: Razona sobre los datos<br/>y diseña la rutina
+    Note over Entrenador: Analiza frecuencia, grupos<br/>trabajados, fatiga → decide tipo sesión
     Entrenador->>Supabase: save_planned_workout(exercises)
-    Entrenador-->>App: Rutina en Markdown
-    App-->>Javi: 📋 Tabla con ejercicios, series, descansos
+    Entrenador-->>Bot: Lista de ejercicios
+    Bot-->>Javi: 🏋️ Nombre — NxM — Xs
 ```
 
-### 2. Reportar sesión (voz o texto)
+### 2. Reportar sesión (texto o audio)
 ```mermaid
 sequenceDiagram
     actor Javi
-    participant App
+    participant Bot
     participant Receptor
     participant Analista
     participant Supabase
 
-    Javi->>App: Audio/Texto con reporte
-    App->>Receptor: run([audio_bytes, "reporte de Javi"])
-    Note over Receptor: Gemini procesa audio/texto<br/>extrae datos estructurados
-    Receptor->>Supabase: save_session(date, exercises, weight...)
-    Receptor-->>App: "¡Guardado! 3 series de colgado..."
+    Javi->>Bot: Audio/Texto con reporte
+    Bot->>Receptor: run([audio_bytes, "reporte"])
+    Receptor->>Supabase: get_planned_workout()
+    Supabase-->>Receptor: ejercicios planificados hoy
+    Note over Receptor: Compara plan vs realidad<br/>Infiere fatiga del tono
+    Receptor->>Supabase: save_session(date, exercises, fatigue...)
+    Receptor-->>Bot: "¡Guardado! 3 series de colgado..."
     
     alt >= 3 sesiones en DB
-        App->>Analista: run("Analiza progreso")
+        Bot->>Analista: run("Analiza progreso")
         Analista->>Supabase: get_all_sessions()
         Analista->>Supabase: save_recommendation("Subir a 4x15s...")
-        Analista-->>App: Recomendaciones personalizadas
+        Analista-->>Bot: Análisis de progreso
     end
     
-    App-->>Javi: ✅ Confirmación + análisis
+    Bot-->>Javi: ✅ Confirmación + análisis
 ```
 
 ---
 
-## 📁 Estructura del Proyecto
-
-```
-calistenia/
-│
-├── app.py                  # Interfaz Streamlit (web móvil) — con Google OAuth
-├── main.py                 # CLI para uso local / Termux Android
-├── database.py             # Capa de datos (Supabase SDK)
-├── migration.py            # Auto-creación de tablas en Cloud Run
-├── voice.py                # Grabación de audio (desktop)
-├── supabase_schema.sql     # SQL para crear tablas manualmente
-│
-├── scripts/
-│   ├── run_simulator.py    # 🧪 Genera sesiones ficticias en Supabase
-│   └── run_arp.py          # 🤖 Ejecuta el ARP Evolver (analiza + reescribe prompts)
-│
-├── agents/
-│   ├── base.py             # ⭐ BUCLE AGÉNTICO EXPLÍCITO (leer primero)
-│   ├── orchestrator.py     # Coordinación entre agentes
-│   ├── receptor.py         # Agente 1: parseo de reportes
-│   ├── trainer.py          # Agente 2: diseño de rutinas
-│   ├── analyst.py          # Agente 3: análisis de progreso
-│   ├── simulator.py        # Agente 4: generación de datos de sesión (sin tool loop)
-│   ├── arp_evolver.py      # Agente 5: meta-agente de mejora autónoma del sistema
-│   └── agent_manager.py    # Tools para leer/reescribir prompts de agentes
-│
-├── .streamlit/
-│   ├── secrets.toml        # 🔒 Credenciales + config OAuth (no en git)
-│   └── secrets.toml.example # Plantilla con instrucciones
-│
-├── docker_entrypoint.sh    # Genera secrets.toml desde env vars al arrancar en Cloud Run
-├── .env                    # 🔒 Credenciales locales (no en git)
-├── requirements.txt        # Dependencias Python
-├── Dockerfile              # Contenedor para Cloud Run
-└── deploy_cloud.ps1        # Script de despliegue — incluye vars OAuth
-```
-
----
-
-## 🛠️ Stack Tecnológico
-
-| Capa | Tecnología | Por qué |
-|---|---|---|
-| **LLM** | Google Gemini 2.5 Flash | Gratuito, soporta audio nativo, function calling |
-| **Agent SDK** | `google-genai` | Automatic function calling, multimodal |
-| **Base de datos** | Supabase (PostgreSQL) | Persiste entre reinicios de Cloud Run, gratis |
-| **Interfaz web** | Streamlit | Rapid prototyping, `st.audio_input()` para móvil |
-| **Despliegue** | Google Cloud Run | Escala a cero (coste ~0 en desuso), HTTPS gratis |
-| **Contenedor** | Docker | Reproducible en cualquier entorno |
-
----
-
-## 🤖 Los 5 Agentes
+## 🤖 Los Agentes y su Lógica
 
 ### 📥 Receptor (`agents/receptor.py`)
-- **Modelo:** Gemini 2.5 Flash
-- **Input:** Texto libre o audio (webm/wav)
-- **Tools:** `get_user_profile`, `save_session`
-- **Misión:** Convertir "hoy he hecho 3 series de colgado y me ha dolido el pie" en datos estructurados guardados en Supabase
+- **Modelo:** Gemini Flash (más rápido, suficiente para parseo)
+- **Input:** Texto libre o audio `.ogg`
+- **Tools:** `get_user_profile`, `get_planned_workout`, `save_session`
+- **Lógica especial:**
+  - Carga el plan de hoy y pregunta si se completó
+  - Infiere fatiga (1-10) del tono del reporte sin preguntar
+  - Si el usuario dice "hice todo" → usa todos los ejercicios del plan
 
 ### 🏋️ Entrenador (`agents/trainer.py`)
-- **Modelo:** Gemini 2.5 Flash
-- **Input:** Petición de rutina
-- **Tools:** `get_user_profile`, `get_recent_sessions`, `get_week_frequency`, `get_days_since_last_session`, `get_recent_recommendations`, `save_planned_workout`
-- **Misión:** Diseñar rutina de 40min de impacto cero adaptada al historial real de Javi
+- **Modelo:** Gemini Pro
+- **Input:** `"LUGAR HOY: Parque"` o `"LUGAR HOY: Casa"`
+- **Tools:** `get_user_profile`, `get_recent_sessions`, `get_week_frequency`, `get_days_since_last_session`, `get_recent_recommendations`, `save_planned_workout`, `set_next_milestone`
+- **Lógica data-driven (3 pasos obligatorios):**
+  1. Lee datos: frecuencia semanal, días consecutivos, ejercicios recientes, fatiga media
+  2. Decide tipo de sesión: normal / equilibrada / suave / descanso activo
+  3. Selecciona ejercicios con variedad real: nunca repite si apareció en las últimas 2 sesiones
+- **Protocolos:** Parque (barras, colgado, equilibrio, inversión) / Casa (mancuernas, esterilla)
 
 ### 📊 Analista (`agents/analyst.py`)
-- **Modelo:** Gemini 2.5 Flash
+- **Modelo:** Gemini Pro
 - **Input:** Petición de análisis (se activa automáticamente tras ≥3 sesiones)
 - **Tools:** `get_user_profile`, `get_all_sessions`, `get_exercise_history`, `save_recommendation`
-- **Misión:** Detectar progreso, estancamientos, y dejar recomendaciones para el Entrenador
+- **Regla de fatiga:** Solo reporta fatiga si hay datos reales — nunca inventa valores
+
+### 💬 Coach (`agents/coach.py`)
+- **Modelo:** Gemini Pro
+- **Input:** Pregunta técnica (texto o audio)
+- **Tools:** `get_user_profile`, `get_recent_sessions`, `get_recent_recommendations`
+- **Misión:** Responder dudas de técnica, adaptaciones por lesión, nutrición básica
 
 ### 🧪 Simulador (`agents/simulator.py`)
-- **Modelo:** Gemini 2.5 Flash
-- **Input:** Fecha de inicio + número de días
-- **Tools:** `save_session`, `get_all_sessions`
-- **Misión:** Generar datos ficticios de entrenamiento realistas para poblar la DB (desarrollo/testing)
-- **Uso:** `python run_simulator.py --start 2026-03-01 --days 28`
+- **Modelo:** Gemini Flash
+- **Misión:** Generar datos ficticios realistas para poblar la DB en desarrollo
+- **Uso:** `python scripts/run_simulator.py --start 2026-03-01 --days 28`
 
 ### 🔄 ARP Evolver (`agents/arp_evolver.py`)
-- **Modelo:** Gemini 2.5 Flash
-- **Input:** Petición de análisis global
-- **Tools:** `get_all_sessions`, `get_recent_recommendations`, `save_recommendation`
-- **Misión:** Meta-agente que analiza patrones en los datos reales y propone mejoras concretas a los system prompts de los otros agentes
-- **Uso:** `python run_arp.py`
+- **Modelo:** Gemini Pro
+- **Misión:** Meta-agente que analiza patrones y propone mejoras a los system prompts
+- **Uso:** `python scripts/run_arp.py`
 
 ---
 
@@ -235,18 +234,21 @@ calistenia/
 user_profile          sessions              exercises
 ─────────────         ─────────────         ─────────────
 id (PK)               id (PK)               id (PK)
-name                  planned_workout_id ──► session_id (FK)
-age                   date                  name
-initial_weight        weight                sets
-current_weight        duration_minutes      reps
-injuries              fatigue_level         seconds
-goals                 general_notes         weight
-last_updated          created_at            difficulty
-                                            notes
+user_email            user_email            session_id (FK)
+name                  planned_workout_id    name
+age                   date                  sets
+initial_weight        weight                reps
+current_weight        duration_minutes      seconds
+injuries              fatigue_level         weight
+goals                 general_notes         difficulty
+home_equipment        created_at            notes
+next_milestone
+last_updated
 
 planned_workouts      analyst_recommendations
 ─────────────         ───────────────────────
 id (PK)               id (PK)
+user_email            user_email
 date                  date
 focus                 recommendation
 total_duration_min    created_at
@@ -257,12 +259,69 @@ created_at
 
 ---
 
+## 📁 Estructura del Proyecto
+
+```
+calistenia/
+│
+├── telegram_bot.py         # 📱 Bot de Telegram (interfaz principal)
+├── app.py                  # 🌐 Panel admin Streamlit (Google OAuth)
+├── main.py                 # 💻 CLI para uso local / Termux Android
+├── database.py             # 🗄️ Capa de datos (Supabase SDK)
+├── migration.py            # Auto-creación de tablas en Cloud Run
+├── supabase_schema.sql     # SQL para crear tablas manualmente
+│
+├── agents/
+│   ├── base.py             # ⭐ BUCLE AGÉNTICO EXPLÍCITO (leer primero)
+│   ├── orchestrator.py     # Coordinación entre agentes
+│   ├── receptor.py         # Agente: parseo de reportes + inferencia de fatiga
+│   ├── trainer.py          # Agente: diseño de rutinas data-driven
+│   ├── analyst.py          # Agente: análisis de progreso
+│   ├── coach.py            # Agente: consultas técnicas y lesiones
+│   ├── simulator.py        # Agente: generación de datos de prueba
+│   └── arp_evolver.py      # Meta-agente: mejora autónoma de prompts
+│
+├── scripts/
+│   ├── run_simulator.py    # Genera sesiones ficticias en Supabase
+│   └── run_arp.py          # Ejecuta el ARP Evolver
+│
+├── Dockerfile              # Contenedor Streamlit (Cloud Run)
+├── Dockerfile.telegram     # Contenedor Telegram bot (Cloud Run · min-instances=1)
+├── deploy_cloud.ps1        # Deploy Streamlit a Cloud Run
+├── deploy_telegram.ps1     # Deploy bot Telegram a Cloud Run
+├── cloudbuild.telegram.yaml # Config Cloud Build para el bot
+│
+├── .streamlit/
+│   ├── secrets.toml        # 🔒 Credenciales OAuth (no en git)
+│   └── secrets.toml.example # Plantilla
+│
+├── .env                    # 🔒 Variables locales (no en git — ver .env.example)
+└── requirements.txt        # Dependencias Python
+```
+
+---
+
+## 🛠️ Stack Tecnológico
+
+| Capa | Tecnología | Por qué |
+|---|---|---|
+| **LLM** | Google Gemini (Flash + Pro) | Soporta audio nativo, function calling, multimodal |
+| **Agent SDK** | `google-genai` | Automatic function calling, tool loop |
+| **Base de datos** | Supabase (PostgreSQL) | Persiste entre reinicios, tier gratuito |
+| **Interfaz principal** | python-telegram-bot 20.x | Funciona sin WebSocket persistente, perfecto para móvil |
+| **Panel admin** | Streamlit + Google OAuth | Rapid prototyping, acceso protegido |
+| **Despliegue** | Google Cloud Run | Escala a cero (coste ~0 en desuso), HTTPS gratis |
+| **Contenedor** | Docker | Reproducible en cualquier entorno |
+
+---
+
 ## 🚀 Instalación y Uso
 
 ### Requisitos
 - Python 3.11+
 - Cuenta en [Google AI Studio](https://aistudio.google.com/) (API key gratuita)
 - Cuenta en [Supabase](https://supabase.com/) (tier gratuito)
+- Bot de Telegram creado con [@BotFather](https://t.me/botfather)
 - `gcloud` CLI (solo para despliegue en Cloud Run)
 
 ### Setup local
@@ -270,15 +329,12 @@ created_at
 git clone https://github.com/JavierRubio4U/calistenia.git
 cd calistenia
 
-# Entorno virtual
 python -m venv venv
 source venv/Scripts/activate   # Windows
 # source venv/bin/activate     # Mac/Linux
 
-# Dependencias
 pip install -r requirements.txt
 
-# Variables de entorno
 cp .env.example .env
 # Editar .env con tus claves
 ```
@@ -288,9 +344,12 @@ cp .env.example .env
 2. Pega el contenido de `supabase_schema.sql`
 3. Ejecuta → "Success"
 
-### Ejecutar
+### Ejecutar localmente
 ```bash
-# Web (Streamlit)
+# Bot Telegram
+python telegram_bot.py
+
+# Panel admin (Streamlit)
 streamlit run app.py
 
 # CLI
@@ -299,27 +358,12 @@ python main.py
 
 ### Desplegar en Cloud Run
 ```powershell
-# Windows PowerShell
+# Bot Telegram (min-instances=1 para mantener el polling activo)
+.\deploy_telegram.ps1
+
+# Panel admin Streamlit
 .\deploy_cloud.ps1
 ```
-
----
-
-## 📱 Uso en Android (Termux)
-
-```bash
-pkg update && pkg install python git
-git clone https://github.com/JavierRubio4U/calistenia.git
-cd calistenia
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-nano .env   # pega tus claves
-python main.py
-```
-
-**Para voz en Android:** usa el teclado Gboard con el icono del micrófono — dictas y el texto aparece directamente en la terminal.
 
 ---
 
@@ -330,10 +374,16 @@ python main.py
 | `GEMINI_API_KEY` | API key de Google Gemini | [aistudio.google.com](https://aistudio.google.com/apikey) |
 | `SUPABASE_URL` | URL del proyecto Supabase | Dashboard → Settings → API |
 | `SUPABASE_KEY` | Anon/public key de Supabase | Dashboard → Settings → API |
+| `TELEGRAM_BOT_TOKEN` | Token del bot | [@BotFather](https://t.me/botfather) → /newbot |
+| `TELEGRAM_ALLOWED_CHAT_ID` | Tu chat_id personal | [@RawDataBot](https://t.me/rawdatabot) → te lo envía |
+| `CLI_USER_EMAIL` | Email del usuario por defecto (CLI/bot) | El tuyo |
+| `ALLOWED_EMAIL` | Email con acceso al panel admin | El tuyo |
+
+> **Nunca commitees `.env` ni `secrets.toml` — ya están en `.gitignore`**
 
 ---
 
-## 💡 Conceptos Clave para Aprender
+## 💡 Conceptos Clave
 
 ### ¿Qué hace a esto "agéntico" y no solo un chatbot?
 
@@ -348,20 +398,23 @@ LLM → respuesta           LLM → decide qué info necesita
                                → genera respuesta basada en datos reales
 ```
 
-### Comunicación asíncrona entre agentes
+### Comunicación asíncrona entre agentes (Shared State)
 El **Analista** no habla directamente con el **Entrenador**.
-En su lugar, escribe recomendaciones en Supabase → el Entrenador las lee en la siguiente petición.
+Escribe recomendaciones en Supabase → el Entrenador las lee en la siguiente petición.
 
 ```
 Analista ──[save_recommendation()]──► Supabase
 Entrenador ◄──[get_recent_recommendations()]── Supabase
 ```
 
-Este patrón se llama **Shared State** y es uno de los más comunes en sistemas multi-agente.
-
 ### Orquestación determinista vs. con LLM
-Este proyecto usa **orquestación determinista** (Python puro en `orchestrator.py`):
-- Pides rutina → llama al Entrenador
-- Reportas sesión → llama al Receptor, luego opcionalmente al Analista
+Este proyecto usa **orquestación determinista** (`orchestrator.py`, Python puro):
+- `/rutina` → llama al Entrenador
+- Texto libre → llama al Receptor, luego opcionalmente al Analista
+- `/coach` → llama al Coach
 
 Una alternativa sería usar otro LLM para decidir qué agente invocar (más flexible, más caro).
+
+### Por qué Telegram en lugar de Streamlit para móvil
+Streamlit usa WebSockets persistentes que se caen en conexiones móviles inestables.
+Telegram usa HTTP polling — cada petición es independiente, nunca pierde el estado.

@@ -10,13 +10,14 @@ Multi-usuario con Google OAuth.
 
 import streamlit as st
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
 # ─── CRÍTICO: cargar .env ANTES de importar nada que use credenciales ───
 load_dotenv(Path(__file__).parent / ".env")
 
+from streamlit_autorefresh import st_autorefresh
 from database import init_db, get_user_profile, save_user_profile, get_all_users_admin, get_recent_recommendations
 from agents import Orchestrator
 
@@ -39,7 +40,24 @@ if not st.user.is_logged_in:
     st.stop()
 
 user_email = st.user.email
+st.session_state["_user_email"] = user_email
 user_display = st.user.name or user_email
+
+# ─── KEEPALIVE (ping cada 3 min, solo si la sesión del día está abierta) ─────
+_hoy = datetime.now().strftime("%Y-%m-%d")
+_dia_cerrado = st.session_state.get("session_closed_date") == _hoy
+if not _dia_cerrado:
+    st_autorefresh(interval=180_000, limit=None, key="keepalive_ping")
+
+# ─── TIMEOUT DE SESIÓN (máx 4 horas) ────────────────────────────────────────
+SESSION_TIMEOUT_HOURS = 4
+if "session_start" not in st.session_state:
+    st.session_state["session_start"] = datetime.now()
+elif datetime.now() - st.session_state["session_start"] > timedelta(hours=SESSION_TIMEOUT_HOURS):
+    st.warning("⏰ Tu sesión ha expirado tras 4 horas de actividad. Vuelve a entrar para continuar.")
+    if st.button("🔒 Cerrar sesión", type="primary"):
+        st.logout()
+    st.stop()
 
 # ─── INICIALIZACIÓN DB ───────────────────────────────────────
 @st.cache_resource
@@ -187,12 +205,49 @@ if profile.get("injuries") and profile["injuries"] not in ("Sin lesiones conocid
 
 # ─── TABS ────────────────────────────────────────────────────
 is_admin = (user_email.lower() == ADMIN_EMAIL.lower())
-tab_names = ["🔥 Mi Entrenamiento", "📈 Mi Progreso", "📋 Recomendaciones", "💬 Preguntar al Coach"]
+# ─── HELPERS RECEPTOR CHAT ───────────────────────────────────
+def _build_receptor_context(exclude_last: bool = False) -> str:
+    """Construye el contexto de la conversación anterior del receptor."""
+    msgs = st.session_state.get("receptor_msgs", [])
+    if exclude_last and msgs:
+        msgs = msgs[:-1]
+    if not msgs:
+        return ""
+    lines = []
+    for m in msgs:
+        role = "Usuario" if m["role"] == "user" else "Receptor"
+        lines.append(f"{role}: {m['content']}")
+    return "\n".join(lines)
+
+
+def _check_receptor_done(response: str, orch) -> None:
+    """Detecta si el receptor ha guardado la sesión y lanza el analista."""
+    keywords = ["guardado", "guardada", "registrado", "registrada", "anotado", "anotada"]
+    if any(kw in response.lower() for kw in keywords):
+        st.session_state["receptor_done"] = True
+        # Lanzar analista si hay suficientes sesiones
+        import database as _db
+        sessions = _db.get_all_sessions(user_email=st.session_state.get("_user_email", ""))
+        if len(sessions) >= 3:
+            try:
+                analyst_resp = orch.analyst.run(
+                    "Analiza las últimas sesiones guardadas y genera recomendaciones "
+                    "técnicas nuevas para mis próximos entrenamientos."
+                )
+                if analyst_resp:
+                    st.session_state["receptor_msgs"].append(
+                        {"role": "assistant",
+                         "content": f"📊 **Análisis del Analista:**\n\n{analyst_resp}"})
+            except Exception:
+                pass
+
+
+tab_names = ["🔥 Mi Entrenamiento", "💬 Hablar con el Coach", "📈 Mi Progreso", "📋 Recomendaciones"]
 if is_admin:
     tab_names.append("🛡️ Admin")
 
 tabs = st.tabs(tab_names)
-tab1, tab2, tab_rec, tab3 = tabs[0], tabs[1], tabs[2], tabs[3]
+tab1, tab_coach, tab2, tab_rec = tabs[0], tabs[1], tabs[2], tabs[3]
 tab_admin = tabs[4] if is_admin else None
 
 # ─── TAB 1: ENTRENAMIENTO ─────────────────────────────────────
@@ -251,51 +306,139 @@ with tab1:
 
     st.divider()
 
-    # ─── REPORTE ─────────────────────────────────────────────
-    st.subheader("¿Cómo te ha ido hoy?")
-    modo = st.radio("Modo de reporte:", ["🎤 Voz", "⌨️ Texto"], horizontal=True)
+    # ─── REPORTE (chat multi-turno) ───────────────────────────
+    st.divider()
 
-    if modo == "🎤 Voz":
-        audio_file = st.audio_input("Graba tu reporte")
-        if audio_file is not None:
-            if st.button("📤 Enviar reporte", use_container_width=True, type="primary"):
-                with st.spinner("Procesando tu reporte..."):
-                    try:
-                        from google.genai import types
-                        audio_bytes = audio_file.read()
-                        mime_type = getattr(audio_file, "type", None) or "audio/wav"
-                        st.caption(f"Formato detectado: `{mime_type}`")
-                        multimodal_input = [
-                            types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
-                            "Aquí tienes mi reporte de entrenamiento de hoy."
-                        ]
-                        receptor_resp, analyst_resp = orchestrator.report_session(multimodal_input)
-                        st.success("✅ Reporte guardado.")
-                        st.markdown(receptor_resp)
-                        if analyst_resp:
-                            st.info(analyst_resp)
-                    except Exception as e:
-                        st.error(f"Error al procesar el audio: {e}")
+    # Estado del reporte
+    if "receptor_msgs" not in st.session_state:
+        st.session_state["receptor_msgs"] = []
+    if "receptor_done" not in st.session_state:
+        st.session_state["receptor_done"] = False
+    if "session_closed_date" not in st.session_state:
+        st.session_state["session_closed_date"] = None
+    if "mic_active" not in st.session_state:
+        st.session_state["mic_active"] = False
+    if "mic_used" not in st.session_state:
+        st.session_state["mic_used"] = False
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    session_closed = (st.session_state["session_closed_date"] == today_str)
+
+    if session_closed:
+        st.success("✅ Sesión del día cerrada. ¡Hasta mañana!")
+        if st.button("🔓 Reabrir sesión"):
+            st.session_state["session_closed_date"] = None
+            st.rerun()
     else:
-        texto = st.text_area(
-            "Escribe tu reporte:",
-            placeholder="Ej: 3 series de 10s colgado, 10 flexiones en banco, peso 74.5kg, me ha ido bien",
-            height=120,
-        )
-        if st.button("📤 Enviar reporte", use_container_width=True, type="primary",
-                     disabled=not texto.strip()):
-            with st.spinner("Procesando tu reporte..."):
-                try:
-                    receptor_resp, analyst_resp = orchestrator.report_session(texto)
-                    st.success("✅ Reporte guardado.")
-                    st.markdown(receptor_resp)
-                    if analyst_resp:
-                        st.info(analyst_resp)
-                except Exception as e:
-                    st.error(f"Error: {e}")
+        col_titulo, col_cerrar = st.columns([4, 1])
+        with col_titulo:
+            st.subheader("¿Cómo te ha ido hoy?")
+        with col_cerrar:
+            st.write("")
+            if st.button("🏁 Cerrar día", help="Oculta el micrófono y el reporte hasta mañana"):
+                st.session_state["session_closed_date"] = today_str
+                st.session_state["mic_active"] = False
+                st.rerun()
 
-# ─── TAB 3: COACH ────────────────────────────────────────────
-with tab3:
+        # Mostrar historial del chat
+        for msg in st.session_state["receptor_msgs"]:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if not st.session_state["receptor_done"]:
+            # ─── FATIGA (opcional) ────────────────────────────────────────
+            with st.expander("⚡ Indicar fatiga manualmente (opcional)"):
+                fatiga = st.slider(
+                    "Fatiga al terminar",
+                    min_value=1, max_value=10,
+                    value=st.session_state.get("fatiga_hoy", 5),
+                    help="1 = fresco · 10 = agotado. Si no lo tocas, el Receptor lo infiere de tu reporte.",
+                    key="fatiga_slider",
+                )
+                st.session_state["fatiga_hoy"] = fatiga
+
+            # Selector de modo — Voz por defecto
+            modo_rep = st.radio("Modo:", ["🎤 Voz", "⌨️ Texto"], horizontal=True,
+                                key="modo_rep", label_visibility="collapsed")
+
+            if modo_rep == "🎤 Voz":
+                # El micro SOLO aparece al pulsar el botón — evita activación automática en el coche
+                if not st.session_state["mic_active"] and not st.session_state["mic_used"]:
+                    if st.button("🎤 Activar grabación", use_container_width=True, type="primary"):
+                        st.session_state["mic_active"] = True
+                        st.rerun()
+                else:
+                    audio_file = st.audio_input("Graba tu reporte de hoy", key="audio_rep")
+                    col_env, col_cancel = st.columns([3, 1])
+                    with col_env:
+                        enviar_audio = st.button("📤 Enviar", type="primary",
+                                                 use_container_width=True,
+                                                 disabled=audio_file is None)
+                    with col_cancel:
+                        if st.button("✕ Cancelar", use_container_width=True):
+                            st.session_state["mic_active"] = False
+                            st.rerun()
+
+                    if audio_file and enviar_audio:
+                        with st.spinner("Procesando audio..."):
+                            try:
+                                from google.genai import types as gtypes
+                                audio_bytes = audio_file.read()
+                                mime_type = getattr(audio_file, "type", None) or "audio/wav"
+                                st.session_state["receptor_msgs"].append(
+                                    {"role": "user", "content": "🎤 *Reporte de voz enviado*"})
+                                st.session_state["mic_active"] = False
+                                st.session_state["mic_used"] = True
+                                fatiga_ctx = f"FATIGA REPORTADA POR EL USUARIO: {st.session_state.get('fatiga_hoy', 5)}/10.\n"
+                                history_ctx = fatiga_ctx + _build_receptor_context()
+                                multimodal = [
+                                    gtypes.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+                                    "Aquí tienes mi reporte de entrenamiento de hoy."
+                                ]
+                                resp = orchestrator.receptor.run(multimodal, context=history_ctx)
+                                st.session_state["receptor_msgs"].append(
+                                    {"role": "assistant", "content": resp})
+                                _check_receptor_done(resp, orchestrator)
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                        st.rerun()
+
+            # Input de texto siempre disponible
+            user_input = st.chat_input("Cuéntame cómo fue o responde al receptor...")
+            if user_input:
+                st.session_state["receptor_msgs"].append({"role": "user", "content": user_input})
+                st.session_state["mic_active"] = False
+                with st.spinner("Procesando..."):
+                    try:
+                        fatiga_ctx = f"FATIGA REPORTADA POR EL USUARIO: {st.session_state.get('fatiga_hoy', 5)}/10.\n"
+                        history_ctx = fatiga_ctx + _build_receptor_context(exclude_last=True)
+                        resp = orchestrator.receptor.run(user_input, context=history_ctx)
+                        st.session_state["receptor_msgs"].append(
+                            {"role": "assistant", "content": resp})
+                        _check_receptor_done(resp, orchestrator)
+                    except Exception as e:
+                        resp = f"Error: {e}"
+                        st.session_state["receptor_msgs"].append(
+                            {"role": "assistant", "content": resp})
+                st.rerun()
+
+        else:
+            st.success("✅ Sesión guardada correctamente.")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("🔄 Reportar otra sesión", use_container_width=True):
+                    st.session_state["receptor_msgs"] = []
+                    st.session_state["receptor_done"] = False
+                    st.session_state["mic_used"] = False
+                    st.session_state["mic_active"] = False
+                    st.rerun()
+            with col_b:
+                if st.button("🏁 Cerrar día", use_container_width=True, type="primary"):
+                    st.session_state["session_closed_date"] = today_str
+                    st.rerun()
+
+# ─── TAB COACH ───────────────────────────────────────────────
+with tab_coach:
     st.subheader("Pregunta al Coach")
     st.caption("Técnica, dudas sobre ejercicios, adaptaciones para tu lesión...")
 
@@ -342,6 +485,16 @@ with tab3:
 with tab_rec:
     st.subheader("Recomendaciones del Analista")
     st.caption("Lo que el Analista ha ido anotando para mejorar tu entrenamiento.")
+    with st.expander("ℹ️ ¿Qué es esto?", expanded=False):
+        st.markdown(
+            "Esta pestaña muestra la **comunicación interna entre agentes** del sistema. "
+            "Cada vez que reportas una sesión, el **Agente Analista** revisa tu historial completo "
+            "y deja notas técnicas en una base de datos compartida. "
+            "El **Agente Entrenador** lee esas notas automáticamente antes de diseñar tu próxima rutina, "
+            "sin que tú tengas que hacer nada. "
+            "Es un ejemplo de *shared state* en programación agéntica: dos IAs coordinándose "
+            "de forma asíncrona a través de una memoria persistente."
+        )
 
     col_r, col_refresh = st.columns([5, 1])
     with col_refresh:
