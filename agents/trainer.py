@@ -165,5 +165,5 @@ def create_trainer_agent(profile: dict, user_email: str):
         name="Entrenador",
         system_prompt=system_prompt,
         tools=tools,
-        model_id="models/gemini-3.1-pro-preview",
+        model_id="models/gemini-flash-latest",
     )

@@ -12,6 +12,7 @@ Comandos:
 
 import os
 import re
+import random
 import logging
 import tempfile
 from pathlib import Path
@@ -73,6 +74,38 @@ def _keyboard():
     )
 
 
+_MSGS_RUTINA = [
+    "⚡ Dame un momento, voy a ver qué toca hoy...",
+    "🏋️ Mirando tu historial y preparando algo...",
+    "📋 Un segundo, revisando lo que has hecho últimamente...",
+    "💪 Voy a ello, dame un momento...",
+    "🧠 Analizando y armando tu sesión de hoy...",
+    "⏳ Un momento, te lo preparo...",
+]
+
+_MSGS_PROGRESO = [
+    "🔍 Revisando tus datos... dame un momento 📈",
+    "📊 Analizando tu evolución...",
+    "⏳ Un segundo, voy a ver cómo llevas todo...",
+    "💡 Mirando tus sesiones y sacando conclusiones...",
+]
+
+_MSGS_COACH = [
+    "🤔 Un momento...",
+    "💭 Déjame pensar...",
+    "⏳ Dame un segundo...",
+    "🧐 En ello...",
+]
+
+_MSGS_SESION = [
+    "📥 Anotando...",
+    "✍️ Registrando tu sesión...",
+    "📋 Un momento...",
+    "💾 Guardando lo que me cuentas...",
+    "📝 Procesando...",
+]
+
+
 def _fix_bold(text: str) -> str:
     """Convierte **texto** → *texto* para Telegram."""
     return re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
@@ -113,7 +146,7 @@ async def cmd_rutina(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_progreso(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update): return
     _state[update.effective_chat.id] = None
-    await update.message.reply_text("🔍 Analizando... ¡un momento! 📈")
+    await update.message.reply_text(random.choice(_MSGS_PROGRESO))
     try:
         await _send(update, _orch.analyze_progress())
     except Exception as e:
@@ -125,7 +158,7 @@ async def cmd_coach(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update): return
     pregunta = " ".join(ctx.args) if ctx.args else ""
     if pregunta:
-        await update.message.reply_text("🤔 Un momento...")
+        await update.message.reply_text(random.choice(_MSGS_COACH))
         try:
             await _send(update, _orch.ask_coach(pregunta))
         except Exception as e:
@@ -197,7 +230,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lugar  = state["lugar"]
         minutos = state["minutos"]
         _state[chat_id] = None
-        await update.message.reply_text("⚡ Un momento, te preparo algo bueno! 😄")
+        await update.message.reply_text(random.choice(_MSGS_RUTINA))
         ctx_str = f"LUGAR HOY: {lugar}. TIEMPO DISPONIBLE: {minutos} min. ESTADO HOY: {estado}."
         try:
             await _send(update, _orch.get_workout_plan(context=ctx_str))
@@ -208,7 +241,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Modo coach
     if state == "coach":
         _state[chat_id] = None
-        await update.message.reply_text("🤔 Un momento...")
+        await update.message.reply_text(random.choice(_MSGS_COACH))
         try:
             await _send(update, _orch.ask_coach(text))
         except Exception as e:
@@ -217,7 +250,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Reporte de sesión (por defecto)
     _state[chat_id] = None
-    await update.message.reply_text("📥 Procesando...")
+    await update.message.reply_text(random.choice(_MSGS_SESION))
     try:
         receptor_resp, _ = _orch.report_session(text)
         await _send(update, receptor_resp)
@@ -230,7 +263,7 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update): return
     chat_id = update.effective_chat.id
     state   = _state.get(chat_id)
-    await update.message.reply_text("🎙️ Escuchando...")
+    await update.message.reply_text(random.choice(_MSGS_SESION))
     try:
         vf = await update.message.voice.get_file()
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
