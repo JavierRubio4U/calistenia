@@ -220,26 +220,24 @@ def _build_receptor_context(exclude_last: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _check_receptor_done(response: str, orch) -> None:
-    """Detecta si el receptor ha guardado la sesión y lanza el analista."""
+def _receptor_preload(user_email: str) -> str:
+    """Pre-carga perfil y plan de hoy para el Receptor (elimina tool calls de lectura)."""
+    import json
+    import database as _db
+    profile = _db.get_user_profile(user_email=user_email)
+    planned = _db.get_planned_workout(user_email=user_email)
+    return (
+        "═══ DATOS PRE-CARGADOS ═══\n"
+        f"PERFIL: {json.dumps(profile, ensure_ascii=False, default=str)}\n"
+        f"PLAN DE HOY: {json.dumps(planned, ensure_ascii=False, default=str)}\n"
+    )
+
+
+def _check_receptor_done(response: str) -> None:
+    """Detecta si el receptor ha guardado la sesión."""
     keywords = ["guardado", "guardada", "registrado", "registrada", "anotado", "anotada"]
     if any(kw in response.lower() for kw in keywords):
         st.session_state["receptor_done"] = True
-        # Lanzar analista si hay suficientes sesiones
-        import database as _db
-        sessions = _db.get_all_sessions(user_email=st.session_state.get("_user_email", ""))
-        if len(sessions) >= 3:
-            try:
-                analyst_resp = orch.analyst.run(
-                    "Analiza las últimas sesiones guardadas y genera recomendaciones "
-                    "técnicas nuevas para mis próximos entrenamientos."
-                )
-                if analyst_resp:
-                    st.session_state["receptor_msgs"].append(
-                        {"role": "assistant",
-                         "content": f"📊 **Análisis del Analista:**\n\n{analyst_resp}"})
-            except Exception:
-                pass
 
 
 tab_names = ["🔥 Mi Entrenamiento", "💬 Hablar con el Coach", "📈 Mi Progreso", "📋 Recomendaciones"]
@@ -263,8 +261,8 @@ with tab1:
 
         col_e, col_t = st.columns(2)
         with col_e:
-            energia = st.slider("Nivel de energía", 1, 10, 7,
-                                help="1 = agotado, 10 = con mucha energía")
+            estado = st.radio("¿Cómo estás hoy?", ["😓 Mal", "😐 Normal", "💪 Bien"],
+                              index=1, horizontal=True)
         with col_t:
             tiempo = st.radio("Tiempo disponible", ["30 min", "40 min", "60 min"],
                               index=1, horizontal=True)
@@ -287,9 +285,9 @@ with tab1:
 
     if generar:
         lugar_limpio = "Casa" if lugar == "🏠 Casa" else "Parque / Calistenia"
-        contexto = f"LUGAR HOY: {lugar_limpio}."
-        contexto += f" Nivel de energía hoy: {energia}/10."
-        contexto += f" Tiempo disponible: {tiempo}."
+        estado_limpio = estado.split(" ", 1)[1]  # quita el emoji
+        tiempo_limpio = tiempo.replace(" min", "")
+        contexto = f"LUGAR HOY: {lugar_limpio}. TIEMPO DISPONIBLE: {tiempo_limpio} min. ESTADO HOY: {estado_limpio}."
         if nota_previa.strip():
             contexto += f" Nota adicional: {nota_previa.strip()}."
         contexto += f" Peso corporal hoy: {peso_hoy} kg."
@@ -346,17 +344,6 @@ with tab1:
                 st.markdown(msg["content"])
 
         if not st.session_state["receptor_done"]:
-            # ─── FATIGA (opcional) ────────────────────────────────────────
-            with st.expander("⚡ Indicar fatiga manualmente (opcional)"):
-                fatiga = st.slider(
-                    "Fatiga al terminar",
-                    min_value=1, max_value=10,
-                    value=st.session_state.get("fatiga_hoy", 5),
-                    help="1 = fresco · 10 = agotado. Si no lo tocas, el Receptor lo infiere de tu reporte.",
-                    key="fatiga_slider",
-                )
-                st.session_state["fatiga_hoy"] = fatiga
-
             # Selector de modo — Voz por defecto
             modo_rep = st.radio("Modo:", ["🎤 Voz", "⌨️ Texto"], horizontal=True,
                                 key="modo_rep", label_visibility="collapsed")
@@ -389,8 +376,8 @@ with tab1:
                                     {"role": "user", "content": "🎤 *Reporte de voz enviado*"})
                                 st.session_state["mic_active"] = False
                                 st.session_state["mic_used"] = True
-                                fatiga_ctx = f"FATIGA REPORTADA POR EL USUARIO: {st.session_state.get('fatiga_hoy', 5)}/10.\n"
-                                history_ctx = fatiga_ctx + _build_receptor_context()
+                                preload = _receptor_preload(user_email)
+                                history_ctx = preload + "\n" + _build_receptor_context()
                                 multimodal = [
                                     gtypes.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
                                     "Aquí tienes mi reporte de entrenamiento de hoy."
@@ -398,7 +385,7 @@ with tab1:
                                 resp = orchestrator.receptor.run(multimodal, context=history_ctx)
                                 st.session_state["receptor_msgs"].append(
                                     {"role": "assistant", "content": resp})
-                                _check_receptor_done(resp, orchestrator)
+                                _check_receptor_done(resp)
                             except Exception as e:
                                 st.error(f"Error: {e}")
                         st.rerun()
@@ -410,12 +397,12 @@ with tab1:
                 st.session_state["mic_active"] = False
                 with st.spinner("Procesando..."):
                     try:
-                        fatiga_ctx = f"FATIGA REPORTADA POR EL USUARIO: {st.session_state.get('fatiga_hoy', 5)}/10.\n"
-                        history_ctx = fatiga_ctx + _build_receptor_context(exclude_last=True)
+                        preload = _receptor_preload(user_email)
+                        history_ctx = preload + "\n" + _build_receptor_context(exclude_last=True)
                         resp = orchestrator.receptor.run(user_input, context=history_ctx)
                         st.session_state["receptor_msgs"].append(
                             {"role": "assistant", "content": resp})
-                        _check_receptor_done(resp, orchestrator)
+                        _check_receptor_done(resp)
                     except Exception as e:
                         resp = f"Error: {e}"
                         st.session_state["receptor_msgs"].append(

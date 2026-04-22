@@ -58,7 +58,7 @@ USER_EMAIL     = os.getenv("CLI_USER_EMAIL", "carthagonova@gmail.com")
 init_db()
 _profile = get_user_profile(user_email=USER_EMAIL)
 _orch    = Orchestrator(user_email=USER_EMAIL, profile=_profile)
-_state: dict = {}  # chat_id → "coach" | "esperando_lugar" | None
+_state: dict = {}  # chat_id → None | "coach" | "esperando_lugar_tiempo" | {"step":"esperando_estado","lugar":str,"minutos":int}
 
 
 def _allowed(update: Update) -> bool:
@@ -100,10 +100,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ─── /rutina ─────────────────────────────────────────────────────────────────
 async def cmd_rutina(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update): return
-    _state[update.effective_chat.id] = "esperando_lugar"
-    await update.message.reply_text("⚡ ¿Dónde entrenas hoy?",
+    _state[update.effective_chat.id] = "esperando_lugar_tiempo"
+    await update.message.reply_text(
+        "⚡ ¿Dónde entrenas y cuánto tiempo tienes?",
         reply_markup=ReplyKeyboardMarkup(
-            [[KeyboardButton("🌳 Parque"), KeyboardButton("🏠 Casa")]],
+            [[KeyboardButton("🌳 Parque 30min"), KeyboardButton("🌳 Parque 40min"), KeyboardButton("🌳 Parque 60min")],
+             [KeyboardButton("🏠 Casa 30min"),   KeyboardButton("🏠 Casa 40min"),   KeyboardButton("🏠 Casa 60min")]],
             resize_keyboard=True, one_time_keyboard=True))
 
 
@@ -175,13 +177,30 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await cmd_start(update, ctx)
         return
 
-    # Selección de lugar
-    if state == "esperando_lugar":
-        lugar = "Parque / Calistenia" if "parque" in text.lower() else "Casa"
+    # Paso 1: Selección de lugar + tiempo
+    if state == "esperando_lugar_tiempo":
+        tl = text.lower()
+        lugar   = "Parque / Calistenia" if "parque" in tl else "Casa"
+        minutos = 30 if "30" in tl else (60 if "60" in tl else 40)
+        _state[chat_id] = {"step": "esperando_estado", "lugar": lugar, "minutos": minutos}
+        await update.message.reply_text(
+            "¿Cómo estás hoy?",
+            reply_markup=ReplyKeyboardMarkup(
+                [[KeyboardButton("😓 Mal"), KeyboardButton("😐 Normal"), KeyboardButton("💪 Bien")]],
+                resize_keyboard=True, one_time_keyboard=True))
+        return
+
+    # Paso 2: Estado de forma → generar rutina
+    if isinstance(state, dict) and state.get("step") == "esperando_estado":
+        tl     = text.lower()
+        estado = "Mal" if "mal" in tl else ("Bien" if "bien" in tl else "Normal")
+        lugar  = state["lugar"]
+        minutos = state["minutos"]
         _state[chat_id] = None
         await update.message.reply_text("⚡ Un momento, te preparo algo bueno! 😄")
+        ctx_str = f"LUGAR HOY: {lugar}. TIEMPO DISPONIBLE: {minutos} min. ESTADO HOY: {estado}."
         try:
-            await _send(update, _orch.get_workout_plan(context=f"LUGAR HOY: {lugar}."))
+            await _send(update, _orch.get_workout_plan(context=ctx_str))
         except Exception as e:
             await _send(update, f"❌ Error: {e}")
         return
@@ -200,10 +219,8 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _state[chat_id] = None
     await update.message.reply_text("📥 Procesando...")
     try:
-        receptor_resp, analyst_resp = _orch.report_session(text)
+        receptor_resp, _ = _orch.report_session(text)
         await _send(update, receptor_resp)
-        if analyst_resp:
-            await _send(update, f"📊 *Análisis:*\n\n{analyst_resp}")
     except Exception as e:
         await _send(update, f"❌ Error: {e}")
 
@@ -232,10 +249,8 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             _state[chat_id] = None
             await _send(update, _orch.ask_coach(multimodal))
         else:
-            receptor_resp, analyst_resp = _orch.report_session(multimodal)
+            receptor_resp, _ = _orch.report_session(multimodal)
             await _send(update, receptor_resp)
-            if analyst_resp:
-                await _send(update, f"📊 *Análisis:*\n\n{analyst_resp}")
     except Exception as e:
         await _send(update, f"❌ Error procesando audio: {e}")
 
