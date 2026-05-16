@@ -85,7 +85,7 @@ def main():
         "models/gemini-3.1-pro-preview",
         "models/gemini-3.1-pro-preview-customtools",
         "models/gemini-3-pro-preview",
-        "models/gemini-3.1-flash-lite-preview",
+        "models/gemini-3.1-flash",
         "models/gemini-flash-latest",
         "models/gemini-pro-latest",
         # Gemini 2.5

@@ -79,6 +79,18 @@ def set_next_milestone(milestone: str, user_email: str = None) -> Dict[str, Any]
     return {"status": "ok", "next_milestone": milestone}
 
 
+def update_user_conditions(conditions: str, user_email: str = None) -> Dict[str, Any]:
+    """Actualiza las condiciones físicas/lesiones del usuario en el perfil."""
+    if not supabase:
+        return {}
+    profile = get_user_profile(user_email)
+    if profile:
+        supabase.table("user_profile").update(
+            {"injuries": conditions, "last_updated": "now()"}
+        ).eq("id", profile["id"]).execute()
+    return {"status": "ok", "conditions": conditions}
+
+
 def update_user_weight(new_weight: float, user_email: str = None) -> Dict[str, Any]:
     """Actualiza el peso actual (kg) en el perfil."""
     if not supabase:
@@ -132,15 +144,6 @@ def save_session(date: str, exercises: List[dict], weight: Optional[float] = Non
         return {"error": "Supabase no inicializado"}
 
     try:
-        # 0. Evitar duplicados por fecha + usuario
-        q = supabase.table("sessions").select("id").eq("date", str(date))
-        if user_email:
-            q = q.eq("user_email", user_email)
-        existing = q.execute()
-        if existing.data:
-            print(f"[save_session] Ya existe sesión para {date}, omitiendo.", flush=True)
-            return {"status": "already_exists", "date": date, "session_id": existing.data[0]["id"]}
-
         # 1. Buscar rutina planeada PENDING para hoy
         pw_q = supabase.table("planned_workouts").select("id").eq("date", date).eq("status", "PENDING")
         if user_email:

@@ -33,7 +33,7 @@ Tu misión es detectar cada pequeño avance para mantener su motivación alta.
 
 ═══ PERSONALIDAD ═══
 Tu nombre es Valeria. Tono cercano, motivador y directo. Celebra los avances con energía genuina.
-Algún emoji ocasional está bien. Responde en español."""
+Algún emoji ocasional está bien. Responde en el idioma que use el usuario."""
 
 
 def create_analyst_agent(profile: dict, user_email: str):
@@ -78,5 +78,5 @@ def create_analyst_agent(profile: dict, user_email: str):
         name="Analista",
         system_prompt=system_prompt,
         tools=tools,
-        model_id="models/gemini-3.1-pro-preview",
+        model_id="gemini-3.1-pro-preview",
     )

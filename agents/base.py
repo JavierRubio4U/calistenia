@@ -9,16 +9,20 @@ Implementa el bucle agéntico manualmente:
 """
 
 import os
+import time
+import httpx
 from typing import Any, Callable, List, Optional, Type, Union
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
 from pathlib import Path
 from dotenv import load_dotenv
+import httpx
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-MAX_TOOL_CALLS = 30  # límite de seguridad para evitar loops infinitos
+MAX_TOOL_CALLS = 10  # límite de seguridad para evitar loops infinitos
+MAX_RETRIES    = 3   # reintentos ante ConnectTimeout
 
 
 class Agent:
@@ -51,16 +55,29 @@ class Agent:
             pass
         self.client = genai.Client(api_key=api_key)
 
-    def run(self, user_input: Union[str, List[Union[str, bytes]]], context: str = "") -> Any:
+    def run(
+        self,
+        user_input: Union[str, List[Union[str, bytes]]],
+        context: str = "",
+        history: Optional[List] = None,
+        return_history: bool = False,
+    ) -> Any:
         """
         Ejecuta el agente con bucle agéntico explícito.
+
+        Args:
+            user_input: Texto o lista de partes multimodal del usuario.
+            context: Contexto adicional prepend al mensaje.
+            history: Lista de types.Content previos (conversación anterior).
+            return_history: Si True, devuelve tupla (text, contents) con el historial completo.
         """
         print(f"\n  [{self.name}] Procesando...")
 
-        # Configuración base (sin AFC automático)
+        # Configuración base — AFC y thinking desactivados para usar nuestro bucle manual
         config = types.GenerateContentConfig(
             system_instruction=self.system_prompt,
             tools=self.tools if self.tools else None,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             response_mime_type="application/json" if self.response_schema else None,
             response_schema=self.response_schema if self.response_schema else None,
         )
@@ -75,19 +92,30 @@ class Agent:
             initial_parts = [f"CONTEXTO PREVIO:\n{context}\n\n"] + initial_parts
 
         # Historial de la conversación (multi-turn para tool calls)
-        contents: List[types.Content] = [
+        # Si viene historial previo, usarlo como base antes del mensaje actual
+        contents: List[types.Content] = list(history) if history else []
+        contents.append(
             types.Content(role="user", parts=[types.Part(text=p) if isinstance(p, str) else p for p in initial_parts])
-        ]
+        )
 
         call_count = 0
 
         try:
             while call_count < MAX_TOOL_CALLS:
-                response = self.client.models.generate_content(
-                    model=self.model_id,
-                    contents=contents,
-                    config=config,
-                )
+                # Reintentos ante ConnectTimeout (red inestable desde Cloud Run)
+                for attempt in range(MAX_RETRIES):
+                    try:
+                        response = self.client.models.generate_content(
+                            model=self.model_id,
+                            contents=contents,
+                            config=config,
+                        )
+                        break  # éxito
+                    except httpx.ConnectTimeout:
+                        if attempt < MAX_RETRIES - 1:
+                            time.sleep(2)
+                        else:
+                            raise
 
                 # Obtener las partes de la respuesta del modelo
                 candidate = response.candidates[0]
@@ -101,13 +129,21 @@ class Agent:
                 if not tool_calls:
                     # Sin tool calls → respuesta final
                     if self.response_schema:
-                        return response.parsed if hasattr(response, 'parsed') and response.parsed else response.text
+                        result = response.parsed if hasattr(response, 'parsed') and response.parsed else response.text
+                        if return_history:
+                            return result, contents
+                        return result
                     text = response.text
                     if not text and text_parts:
                         text = "\n".join(p.text for p in text_parts)
                     if not text:
                         finish = candidate.finish_reason if candidate else "UNKNOWN"
                         raise ValueError(f"El modelo no generó respuesta (finish_reason={finish}). Puede que el modelo no esté disponible con esta API key.")
+                    if return_history:
+                        # Añadir respuesta final del modelo al historial antes de devolver
+                        if content:
+                            contents.append(types.Content(role="model", parts=model_parts))
+                        return text, contents
                     return text
 
                 # Hay tool calls: ejecutarlos todos y continuar
@@ -143,7 +179,10 @@ class Agent:
                 # Añadir los resultados de las tools al historial
                 contents.append(types.Content(role="user", parts=tool_results))
 
-            return f"[Error] Se alcanzó el límite de {MAX_TOOL_CALLS} tool calls sin respuesta final."
+            error_msg = f"[Error] Se alcanzó el límite de {MAX_TOOL_CALLS} tool calls sin respuesta final."
+            if return_history:
+                return error_msg, contents
+            return error_msg
 
         except Exception as e:
             print(f"  [Error en {self.name}] {str(e)}")

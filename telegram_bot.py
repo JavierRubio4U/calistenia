@@ -4,16 +4,17 @@ telegram_bot.py - Bot de Telegram para Calistenia Coach (Valeria)
 Comandos:
   /start /menu  → menú principal
   /rutina       → rutina del día
-  /progreso     → análisis de evolución
-  /coach        → pregunta técnica
+  /progreso     → análisis de evolución (Analyst — Pro)
+  /coach        → activa chat con Valeria
   /admin        → resumen de usuarios (solo admin)
-  Texto/voz libre → Receptor (reporte de sesión)
+  Texto/voz libre → Valeria (chat unificado)
 """
 
 import os
 import re
 import random
 import logging
+import asyncio
 import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
@@ -59,7 +60,11 @@ USER_EMAIL     = os.getenv("CLI_USER_EMAIL", "carthagonova@gmail.com")
 init_db()
 _profile = get_user_profile(user_email=USER_EMAIL)
 _orch    = Orchestrator(user_email=USER_EMAIL, profile=_profile)
-_state: dict = {}  # chat_id → None | "coach" | "esperando_lugar_tiempo" | {"step":"esperando_estado","lugar":str,"minutos":int}
+
+# Estado por chat: None | "esperando_lugar_tiempo"
+_state: dict = {}
+# Lock por chat para evitar procesamiento concurrente de mensajes
+_locks: dict = {}
 
 
 def _allowed(update: Update) -> bool:
@@ -68,8 +73,8 @@ def _allowed(update: Update) -> bool:
 
 def _keyboard():
     return ReplyKeyboardMarkup(
-        [[KeyboardButton("🏋️ Rutina"),        KeyboardButton("📊 Progreso")],
-         [KeyboardButton("💬 Coach"),          KeyboardButton("📝 Reportar sesión")]],
+        [[KeyboardButton("🏋️ Rutina"),  KeyboardButton("📊 Progreso")],
+         [KeyboardButton("📝 Reporte")]],
         resize_keyboard=True,
     )
 
@@ -90,19 +95,14 @@ _MSGS_PROGRESO = [
     "💡 Mirando tus sesiones y sacando conclusiones...",
 ]
 
-_MSGS_COACH = [
+_MSGS_VALERIA = [
     "🤔 Un momento...",
     "💭 Déjame pensar...",
     "⏳ Dame un segundo...",
     "🧐 En ello...",
-]
-
-_MSGS_SESION = [
     "📥 Anotando...",
-    "✍️ Registrando tu sesión...",
+    "✍️ Procesando...",
     "📋 Un momento...",
-    "💾 Guardando lo que me cuentas...",
-    "📝 Procesando...",
 ]
 
 
@@ -118,6 +118,12 @@ async def _send(update: Update, text: str):
         await update.message.reply_text(chunk, parse_mode="Markdown", reply_markup=kb)
 
 
+async def _send_error(update: Update, error: Exception):
+    """Envía mensaje de error sin Markdown para evitar problemas de parseo."""
+    msg = f"❌ Error: {type(error).__name__}"
+    await update.message.reply_text(msg, reply_markup=_keyboard())
+
+
 # ─── /start /menu ────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update): return
@@ -126,8 +132,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"💪 *¡Hola {name}! Soy Valeria* 😊\n\n"
         "🏋️ *Rutina* — te preparo el entreno de hoy\n"
         "📊 *Progreso* — vemos cómo vas\n"
-        "💬 *Coach* — pregúntame lo que quieras\n"
-        "📝 *Reportar sesión* — cuéntame cómo fue")
+        "📝 *Reporte* — cuéntame cómo fue el entreno\n"
+        "💬 *O escríbeme directamente* — pregúntame lo que quieras")
 
 
 # ─── /rutina ─────────────────────────────────────────────────────────────────
@@ -148,23 +154,22 @@ async def cmd_progreso(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _state[update.effective_chat.id] = None
     await update.message.reply_text(random.choice(_MSGS_PROGRESO))
     try:
-        await _send(update, _orch.analyze_progress())
+        await _send(update, await asyncio.to_thread(_orch.analyze_progress))
     except Exception as e:
-        await _send(update, f"❌ Error: {e}")
+        await _send_error(update, e)
 
 
-# ─── /coach ──────────────────────────────────────────────────────────────────
+# ─── /coach → activa chat con Valeria ────────────────────────────────────────
 async def cmd_coach(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update): return
     pregunta = " ".join(ctx.args) if ctx.args else ""
     if pregunta:
-        await update.message.reply_text(random.choice(_MSGS_COACH))
+        await update.message.reply_text(random.choice(_MSGS_VALERIA))
         try:
-            await _send(update, _orch.ask_coach(pregunta))
+            await _send(update, _orch.chat(pregunta))
         except Exception as e:
-            await _send(update, f"❌ Error: {e}")
+            await _send_error(update, e)
     else:
-        _state[update.effective_chat.id] = "coach"
         await update.message.reply_text("💬 ¡Dime! Escribe o manda un audio 🎙️",
                                         reply_markup=_keyboard())
 
@@ -185,7 +190,7 @@ async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         await _send(update, "\n".join(lines))
     except Exception as e:
-        await _send(update, f"❌ Error: {e}")
+        await _send_error(update, e)
 
 
 # ─── Texto libre ─────────────────────────────────────────────────────────────
@@ -196,13 +201,11 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     state   = _state.get(chat_id)
 
     # Botones menú
-    if text == "🏋️ Rutina":        await cmd_rutina(update, ctx);   return
-    if text == "📊 Progreso":       await cmd_progreso(update, ctx); return
-    if text == "💬 Coach":          await cmd_coach(update, ctx);    return
-    if text == "📝 Reportar sesión":
-        _state[chat_id] = None
-        await update.message.reply_text(
-            "📝 Cuéntame cómo fue — texto o audio 🎙️", reply_markup=_keyboard())
+    if text == "🏋️ Rutina":   await cmd_rutina(update, ctx);   return
+    if text == "📊 Progreso":  await cmd_progreso(update, ctx); return
+    if text == "📝 Reporte":
+        await update.message.reply_text("💪 ¿Qué ejercicios hiciste? Cuéntame series y repeticiones.",
+                                        reply_markup=_keyboard())
         return
 
     # Saludos → menú
@@ -210,60 +213,43 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await cmd_start(update, ctx)
         return
 
-    # Paso 1: Selección de lugar + tiempo
-    if state == "esperando_lugar_tiempo":
-        tl = text.lower()
-        lugar   = "Parque / Calistenia" if "parque" in tl else "Casa"
-        minutos = 30 if "30" in tl else (60 if "60" in tl else 40)
-        _state[chat_id] = {"step": "esperando_estado", "lugar": lugar, "minutos": minutos}
-        await update.message.reply_text(
-            "¿Cómo estás hoy?",
-            reply_markup=ReplyKeyboardMarkup(
-                [[KeyboardButton("😓 Mal"), KeyboardButton("😐 Normal"), KeyboardButton("💪 Bien")]],
-                resize_keyboard=True, one_time_keyboard=True))
-        return
+    # Lock por chat — evita procesar dos mensajes a la vez del mismo usuario
+    if chat_id not in _locks:
+        _locks[chat_id] = asyncio.Lock()
+    if _locks[chat_id].locked():
+        return  # ya hay una respuesta en curso, ignorar
 
-    # Paso 2: Estado de forma → generar rutina
-    if isinstance(state, dict) and state.get("step") == "esperando_estado":
-        tl     = text.lower()
-        estado = "Mal" if "mal" in tl else ("Bien" if "bien" in tl else "Normal")
-        lugar  = state["lugar"]
-        minutos = state["minutos"]
+    async with _locks[chat_id]:
+        # Re-leer estado dentro del lock (puede haber cambiado)
+        state = _state.get(chat_id)
+
+        # Paso 1: Selección de lugar + tiempo → rutina
+        if state == "esperando_lugar_tiempo":
+            tl = text.lower()
+            lugar   = "Parque / Calistenia" if "parque" in tl else "Casa"
+            minutos = 30 if "30" in tl else (60 if "60" in tl else 40)
+            _state[chat_id] = None
+            await update.message.reply_text(random.choice(_MSGS_RUTINA), reply_markup=_keyboard())
+            ctx_str = f"Quiero rutina. LUGAR: {lugar}. TIEMPO: {minutos} min."
+            try:
+                await _send(update, await asyncio.to_thread(_orch.chat, ctx_str))
+            except Exception as e:
+                await _send_error(update, e)
+            return
+
+        # Todo lo demás → Valeria (chat unificado)
         _state[chat_id] = None
-        await update.message.reply_text(random.choice(_MSGS_RUTINA))
-        ctx_str = f"LUGAR HOY: {lugar}. TIEMPO DISPONIBLE: {minutos} min. ESTADO HOY: {estado}."
+        await update.message.reply_text(random.choice(_MSGS_VALERIA))
         try:
-            await _send(update, _orch.get_workout_plan(context=ctx_str))
+            await _send(update, await asyncio.to_thread(_orch.chat, text))
         except Exception as e:
-            await _send(update, f"❌ Error: {e}")
-        return
-
-    # Modo coach
-    if state == "coach":
-        _state[chat_id] = None
-        await update.message.reply_text(random.choice(_MSGS_COACH))
-        try:
-            await _send(update, _orch.ask_coach(text))
-        except Exception as e:
-            await _send(update, f"❌ Error: {e}")
-        return
-
-    # Reporte de sesión (por defecto)
-    _state[chat_id] = None
-    await update.message.reply_text(random.choice(_MSGS_SESION))
-    try:
-        receptor_resp, _ = _orch.report_session(text)
-        await _send(update, receptor_resp)
-    except Exception as e:
-        await _send(update, f"❌ Error: {e}")
+            await _send_error(update, e)
 
 
 # ─── Voz ─────────────────────────────────────────────────────────────────────
 async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update): return
-    chat_id = update.effective_chat.id
-    state   = _state.get(chat_id)
-    await update.message.reply_text(random.choice(_MSGS_SESION))
+    await update.message.reply_text(random.choice(_MSGS_VALERIA))
     try:
         vf = await update.message.voice.get_file()
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
@@ -278,14 +264,9 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             gtypes.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg"),
             "Este es mi mensaje de voz."
         ]
-        if state == "coach":
-            _state[chat_id] = None
-            await _send(update, _orch.ask_coach(multimodal))
-        else:
-            receptor_resp, _ = _orch.report_session(multimodal)
-            await _send(update, receptor_resp)
+        await _send(update, await asyncio.to_thread(_orch.chat, multimodal))
     except Exception as e:
-        await _send(update, f"❌ Error procesando audio: {e}")
+        await _send_error(update, e)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

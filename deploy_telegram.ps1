@@ -31,6 +31,16 @@ gcloud run deploy $SERVICE `
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "[OK] Bot de Telegram desplegado." -ForegroundColor Green
+
+    # Eliminar revisiones antiguas para evitar que multiples instancias hagan polling simultaneo
+    Write-Host "[CLEANUP] Eliminando revisiones antiguas..." -ForegroundColor Cyan
+    $currentRevision = gcloud run services describe $SERVICE --region $REGION --format="value(status.latestReadyRevisionName)" 2>&1
+    $oldRevisions = gcloud run revisions list --service=$SERVICE --region=$REGION --format="value(name)" 2>&1 | Where-Object { $_ -ne $currentRevision -and $_ -ne "" }
+    foreach ($rev in $oldRevisions) {
+        Write-Host "  Borrando $rev..." -ForegroundColor DarkGray
+        gcloud run revisions delete $rev --region=$REGION --quiet 2>&1 | Out-Null
+    }
+    Write-Host "[OK] Limpieza completada. Solo queda: $currentRevision" -ForegroundColor Green
 } else {
-    Write-Host "[ERROR] Despliegue fallido." -ForegroundColor Red
+    Write-Host "[ERROR] Despliegue fallido. No se han eliminado revisiones anteriores." -ForegroundColor Red
 }

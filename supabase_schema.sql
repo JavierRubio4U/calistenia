@@ -80,6 +80,13 @@ ALTER TABLE public.sessions                   DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.exercises                  DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.analyst_recommendations    DISABLE ROW LEVEL SECURITY;
 
+-- Conceder permisos para la API de Datos (Supabase js / python REST API)
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_profile TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.planned_workouts TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.sessions TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.exercises TO anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.analyst_recommendations TO anon, authenticated, service_role;
+
 -- Datos iniciales de Javi (solo si la tabla está vacía)
 INSERT INTO public.user_profile (user_email, name, age, initial_weight, current_weight, injuries, goals)
 SELECT
