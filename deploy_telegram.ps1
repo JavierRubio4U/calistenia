@@ -41,6 +41,15 @@ if ($LASTEXITCODE -eq 0) {
         gcloud run revisions delete $rev --region=$REGION --quiet 2>&1 | Out-Null
     }
     Write-Host "[OK] Limpieza completada. Solo queda: $currentRevision" -ForegroundColor Green
+
+    # Git push
+    Write-Host "[GIT] Subiendo cambios a GitHub..." -ForegroundColor Cyan
+    git push
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] Git push completado." -ForegroundColor Green
+    } else {
+        Write-Host "[WARN] Git push falló o no hay cambios pendientes." -ForegroundColor Yellow
+    }
 } else {
     Write-Host "[ERROR] Despliegue fallido. No se han eliminado revisiones anteriores." -ForegroundColor Red
 }
