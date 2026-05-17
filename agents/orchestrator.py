@@ -39,7 +39,7 @@ class Orchestrator:
         t0 = time.time()
         profile    = db.get_user_profile(user_email=self.user_email)
         t1 = time.time()
-        sessions   = db.get_recent_sessions(limit=20, user_email=self.user_email)
+        sessions   = db.get_recent_sessions(limit=12, user_email=self.user_email)
         t2 = time.time()
         week_freq  = db.get_week_frequency(user_email=self.user_email)
         t3 = time.time()
