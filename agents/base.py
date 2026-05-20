@@ -73,11 +73,12 @@ class Agent:
         """
         print(f"\n  [{self.name}] Procesando...")
 
-        # Configuración base — AFC y thinking desactivados para usar nuestro bucle manual
+        # Configuración base — AFC desactivado para bucle manual, thinking mínimo para velocidad
         config = types.GenerateContentConfig(
             system_instruction=self.system_prompt,
             tools=self.tools if self.tools else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            thinking_config=types.ThinkingConfig(thinking_budget=512),
             response_mime_type="application/json" if self.response_schema else None,
             response_schema=self.response_schema if self.response_schema else None,
         )
