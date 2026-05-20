@@ -19,6 +19,17 @@ logger = logging.getLogger(__name__)
 
 _MAX_HISTORY = 20
 
+# Keywords que indican que el mensaje necesita datos de BD
+_RUTINA_KW  = {"rutina", "entreno", "parque", "casa", "minutos", "min", "ejercicio", "workout", "sesión", "sesion", "entrena"}
+_REPORTE_KW = {"hice", "hice todo", "realicé", "completé", "entrené", "series", "repeticiones", "reps", "terminé", "acabe", "acabé", "reporte"}
+
+def _needs_db(text: str) -> bool:
+    """Clasificación local sin LLM: ¿necesita datos de BD este mensaje?"""
+    if not isinstance(text, str):
+        return True  # multimodal → por si acaso
+    t = text.lower()
+    return any(w in t for w in _RUTINA_KW | _REPORTE_KW)
+
 
 class Orchestrator:
     """
@@ -73,7 +84,13 @@ class Orchestrator:
             context: Contexto adicional (ej. lugar+tiempo para rutinas).
         """
         t0 = time.time()
-        data_ctx = self._full_context()
+        # Solo prefetch si el mensaje lo requiere — conversación libre no necesita BD
+        if context or _needs_db(user_input):
+            data_ctx = self._full_context()
+            logger.info("[Orchestrator] Modo RUTINA/REPORTE — contexto BD cargado")
+        else:
+            data_ctx = ""
+            logger.info("[Orchestrator] Modo CONVERSACIÓN — sin prefetch BD")
         t1 = time.time()
         full_ctx = (context + "\n" if context else "") + data_ctx
 
