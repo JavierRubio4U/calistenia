@@ -78,7 +78,7 @@ class Agent:
             system_instruction=self.system_prompt,
             tools=self.tools if self.tools else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            thinking_config=types.ThinkingConfig(thinking_budget=512),
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
             response_mime_type="application/json" if self.response_schema else None,
             response_schema=self.response_schema if self.response_schema else None,
         )
