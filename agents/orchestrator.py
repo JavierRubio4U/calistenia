@@ -10,6 +10,7 @@ import json
 import time
 import logging
 from typing import Union, List, Optional
+from concurrent.futures import ThreadPoolExecutor
 from .valeria import create_valeria_agent
 from .analyst import create_analyst_agent
 import database as db
@@ -35,25 +36,23 @@ class Orchestrator:
         self._history: dict = {}
 
     def _full_context(self) -> str:
-        """Pre-fetcha TODOS los datos relevantes para Valeria, eliminando tool calls de lectura."""
+        """Pre-fetcha TODOS los datos relevantes para Valeria en paralelo."""
         t0 = time.time()
-        profile    = db.get_user_profile(user_email=self.user_email)
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            f_profile    = ex.submit(db.get_user_profile,              user_email=self.user_email)
+            f_sessions   = ex.submit(db.get_recent_sessions, 12,       user_email=self.user_email)
+            f_week_freq  = ex.submit(db.get_week_frequency,            user_email=self.user_email)
+            f_days_since = ex.submit(db.get_days_since_last_session,   user_email=self.user_email)
+            f_recs       = ex.submit(db.get_recent_recommendations, 5, user_email=self.user_email)
+            f_planned    = ex.submit(db.get_planned_workout,           user_email=self.user_email)
+            profile    = f_profile.result()
+            sessions   = f_sessions.result()
+            week_freq  = f_week_freq.result()
+            days_since = f_days_since.result()
+            recs       = f_recs.result()
+            planned    = f_planned.result()
         t1 = time.time()
-        sessions   = db.get_recent_sessions(limit=12, user_email=self.user_email)
-        t2 = time.time()
-        week_freq  = db.get_week_frequency(user_email=self.user_email)
-        t3 = time.time()
-        days_since = db.get_days_since_last_session(user_email=self.user_email)
-        t4 = time.time()
-        recs       = db.get_recent_recommendations(limit=5, user_email=self.user_email)
-        t5 = time.time()
-        planned    = db.get_planned_workout(user_email=self.user_email)
-        t6 = time.time()
-        logger.info(
-            f"[DB] profile={t1-t0:.2f}s sessions={t2-t1:.2f}s week_freq={t3-t2:.2f}s "
-            f"days_since={t4-t3:.2f}s recs={t5-t4:.2f}s planned={t6-t5:.2f}s "
-            f"TOTAL_DB={t6-t0:.2f}s"
-        )
+        logger.info(f"[DB] parallel fetch TOTAL={t1-t0:.2f}s")
         return (
             "═══ DATOS PRE-CARGADOS ═══\n"
             f"PERFIL: {json.dumps(profile, ensure_ascii=False, default=str)}\n"
