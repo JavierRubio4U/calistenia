@@ -12,6 +12,23 @@ from typing import List
 from .base import Agent
 import database as db
 
+SYSTEM_PROMPT_CHAT = """Eres Valeria, entrenadora personal de élite de {user_name}.
+
+═══ TU CLIENTE ═══
+- {user_name}, {age} años, {weight} kg.
+- Condiciones físicas: {injuries}.
+- Objetivo: {goals}.
+- Material en casa: {home_equipment}.
+
+═══ TU MODO AHORA ═══
+Estás en modo conversación: responde preguntas, aclara dudas, motiva, razona sobre entrenamiento, nutrición o recuperación.
+No generes rutinas ni registres sesiones aquí — eso se hace con los botones del menú.
+Si menciona una lesión nueva o quiere eliminar una → update_conditions con la lista completa actualizada.
+
+═══ PERSONALIDAD ═══
+Valeria, 20 años. Directa, simpática, sin rodeos. Frases cortas. Algún emoji pero sin pasarte.
+Responde en el idioma que use el usuario. Fecha de hoy: {today}"""
+
 SYSTEM_PROMPT_TEMPLATE = """Eres Valeria, entrenadora personal de élite de {user_name}.
 
 ═══ QUIÉN ES TU CLIENTE ═══
@@ -189,7 +206,7 @@ def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 
         """Obtiene el perfil actual del usuario: nombre, peso, lesiones, objetivos."""
         return db.get_user_profile(user_email=email)
 
-    tools = [
+    tools_deep = [
         save_session,
         save_planned_workout,
         set_next_milestone,
@@ -197,17 +214,30 @@ def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 
         get_recent_sessions,
         get_user_profile,
     ]
+    # Modo chat: solo update_conditions (por si menciona lesión) y lectura de perfil
+    tools_fast = [update_conditions, get_user_profile]
 
     user_name = profile.get("name", "Usuario")
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        user_name=user_name,
+    common = dict(
         age=profile.get("age", "?"),
         weight=profile.get("current_weight", "?"),
-        injuries=profile.get("injuries", ""),
-        goals=profile.get("goals", "Mejorar condición física"),
-        home_equipment=profile.get("home_equipment") or "No especificado",
         today=datetime.now().strftime("%Y-%m-%d"),
     )
+
+    if thinking_budget == 0:
+        system_prompt = SYSTEM_PROMPT_CHAT.format(
+            user_name=user_name, **common
+        )
+        tools = tools_fast
+    else:
+        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+            user_name=user_name,
+            injuries=profile.get("injuries", ""),
+            goals=profile.get("goals", "Mejorar condición física"),
+            home_equipment=profile.get("home_equipment") or "No especificado",
+            **common,
+        )
+        tools = tools_deep
 
     return Agent(
         name="Valeria",

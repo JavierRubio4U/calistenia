@@ -258,7 +258,6 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Todo lo demás → Valeria (chat unificado)
         _state[chat_id] = None
-        await update.message.reply_text(random.choice(_MSGS_VALERIA))
         try:
             await _send(update, await _run_with_typing(ctx, chat_id, _orch.chat, text))
         except Exception as e:
