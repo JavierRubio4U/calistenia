@@ -175,15 +175,26 @@ def save_session(date: str, exercises: List[dict], weight: Optional[float] = Non
                 ex = dict(ex)
             exercises_clean.append(ex)
 
+        def _to_int(val, default=0):
+            if val is None:
+                return default
+            s = str(val).strip()
+            if '-' in s:
+                s = s.split('-')[0].strip()
+            try:
+                return int(float(s))
+            except (ValueError, TypeError):
+                return default
+
         for ex in exercises_clean:
             ex_data = {
                 "session_id": session_id,
                 "name": str(ex.get("name") or "Ejercicio"),
-                "sets": int(ex.get("sets") or 1),
-                "reps": int(ex.get("reps") or 0),
-                "seconds": int(ex.get("seconds") or 0),
+                "sets": _to_int(ex.get("sets"), default=1),
+                "reps": _to_int(ex.get("reps")),
+                "seconds": _to_int(ex.get("seconds")),
                 "weight": float(ex.get("weight") or 0),
-                "difficulty": int(ex.get("difficulty")) if ex.get("difficulty") is not None else None,
+                "difficulty": _to_int(ex.get("difficulty")) if ex.get("difficulty") is not None else None,
                 "notes": str(ex.get("notes")) if ex.get("notes") else None,
             }
             supabase.table("exercises").insert(ex_data).execute()
@@ -294,24 +305,28 @@ def save_planned_workout(exercises: List[dict], total_duration_minutes: int = 40
 
 
 def get_planned_workout(user_email: str = None) -> dict:
-    """Obtiene la rutina planificada para hoy si existe."""
+    """Obtiene la rutina planificada más reciente (hoy o ayer) si existe y aún no se ha reportado."""
     if not supabase:
         return {}
-    today = datetime.now().strftime("%Y-%m-%d")
-    q = supabase.table("planned_workouts").select("*").eq("date", today)
-    if user_email:
-        q = q.eq("user_email", user_email)
-    res = q.order("id", desc=True).limit(1).execute()
-    if not res.data:
-        return {}
-    row = res.data[0]
-    exercises = json.loads(row.get("exercises_json") or "[]")
-    return {
-        "date": row["date"],
-        "focus": row.get("focus", ""),
-        "total_duration_minutes": row.get("total_duration_minutes", 40),
-        "exercises": exercises,
-    }
+    from datetime import timedelta
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    # Busca hoy y ayer para cubrir el caso de reporte tardío al día siguiente
+    for date in [today.strftime("%Y-%m-%d"), yesterday.strftime("%Y-%m-%d")]:
+        q = supabase.table("planned_workouts").select("*").eq("date", date)
+        if user_email:
+            q = q.eq("user_email", user_email)
+        res = q.order("id", desc=True).limit(1).execute()
+        if res.data:
+            row = res.data[0]
+            exercises = json.loads(row.get("exercises_json") or "[]")
+            return {
+                "date": row["date"],
+                "focus": row.get("focus", ""),
+                "total_duration_minutes": row.get("total_duration_minutes", 40),
+                "exercises": exercises,
+            }
+    return {}
 
 
 # ─── RECOMENDACIONES ─────────────────────────────────────────────────────────
