@@ -226,7 +226,11 @@ def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 
 
     if thinking_budget == 0:
         system_prompt = SYSTEM_PROMPT_CHAT.format(
-            user_name=user_name, **common
+            user_name=user_name,
+            injuries=profile.get("injuries", ""),
+            goals=profile.get("goals", "Mejorar condición física"),
+            home_equipment=profile.get("home_equipment") or "No especificado",
+            **common,
         )
         tools = tools_fast
     else:
