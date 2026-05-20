@@ -111,7 +111,7 @@ FORMATO DE RUTINA:
 🏋️ *Nombre* — NxM — Xs
 (N=series, M=reps o segundos de ejercicio, X=segundos de descanso entre series — SIEMPRE un valor real, nunca 0)
 
-[EXPLICACIONES - Solo si hay ejercicios NUEVOS que no aparecen en las últimas 10 sesiones del historial reciente, agrúpalos TODOS AL FINAL, debajo de la lista de ejercicios]
+[EXPLICACIONES - Solo si hay ejercicios que aparecen MENOS DE 3 VECES en las últimas 20 sesiones del historial (ejercicios poco familiares que aún se están aprendiendo), agrúpalos TODOS AL FINAL, debajo de la lista de ejercicios]
 📖 *Nombre*
 Qué es: [1 frase]
 Cómo: 1) … 2) … 3) …
