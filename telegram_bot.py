@@ -118,6 +118,25 @@ async def _send(update: Update, text: str):
         await update.message.reply_text(chunk, parse_mode="Markdown", reply_markup=kb)
 
 
+async def _typing_loop(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Manda 'typing' cada 4s mientras el LLM procesa para mantener el cliente en sync."""
+    try:
+        while True:
+            await ctx.bot.send_chat_action(chat_id=chat_id, action="typing")
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _run_with_typing(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, fn, *args):
+    """Ejecuta fn(*args) en thread mientras manda typing al cliente de Telegram."""
+    task = asyncio.create_task(_typing_loop(ctx, chat_id))
+    try:
+        return await asyncio.to_thread(fn, *args)
+    finally:
+        task.cancel()
+
+
 async def _send_error(update: Update, error: Exception):
     """Envía mensaje de error sin Markdown para evitar problemas de parseo."""
     msg = f"❌ Error: {type(error).__name__}"
@@ -154,7 +173,7 @@ async def cmd_progreso(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _state[update.effective_chat.id] = None
     await update.message.reply_text(random.choice(_MSGS_PROGRESO))
     try:
-        await _send(update, await asyncio.to_thread(_orch.analyze_progress))
+        await _send(update, await _run_with_typing(ctx, update.effective_chat.id, _orch.analyze_progress))
     except Exception as e:
         await _send_error(update, e)
 
@@ -232,7 +251,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(random.choice(_MSGS_RUTINA), reply_markup=_keyboard())
             ctx_str = f"Quiero rutina. LUGAR: {lugar}. TIEMPO: {minutos} min."
             try:
-                await _send(update, await asyncio.to_thread(_orch.chat, ctx_str))
+                await _send(update, await _run_with_typing(ctx, chat_id, _orch.chat, ctx_str))
             except Exception as e:
                 await _send_error(update, e)
             return
@@ -241,7 +260,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         _state[chat_id] = None
         await update.message.reply_text(random.choice(_MSGS_VALERIA))
         try:
-            await _send(update, await asyncio.to_thread(_orch.chat, text))
+            await _send(update, await _run_with_typing(ctx, chat_id, _orch.chat, text))
         except Exception as e:
             await _send_error(update, e)
 
@@ -264,7 +283,7 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             gtypes.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg"),
             "Este es mi mensaje de voz."
         ]
-        await _send(update, await asyncio.to_thread(_orch.chat, multimodal))
+        await _send(update, await _run_with_typing(ctx, update.effective_chat.id, _orch.chat, multimodal))
     except Exception as e:
         await _send_error(update, e)
 
