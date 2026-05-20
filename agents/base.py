@@ -114,7 +114,7 @@ class Agent:
                             config=config,
                         )
                         break  # éxito
-                    except httpx.ConnectTimeout:
+                    except (httpx.ConnectTimeout, httpx.RemoteProtocolError, httpx.ReadTimeout):
                         if attempt < MAX_RETRIES - 1:
                             time.sleep(2)
                         else:

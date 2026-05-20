@@ -42,7 +42,7 @@ class Orchestrator:
 
         # Dos modos: rápido para conversación (sin thinking), completo para rutina/reporte
         self.valeria_fast = create_valeria_agent(profile=profile, user_email=user_email, thinking_budget=0)
-        self.valeria_deep = create_valeria_agent(profile=profile, user_email=user_email, thinking_budget=8192)
+        self.valeria_deep = create_valeria_agent(profile=profile, user_email=user_email, thinking_budget=4096)
         self.analyst = create_analyst_agent(profile=profile, user_email=user_email)
 
         # Historial de conversación por usuario: email → lista de types.Content
