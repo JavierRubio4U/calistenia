@@ -36,13 +36,15 @@ class Agent:
         system_prompt: str,
         tools: Optional[List[Callable]] = None,
         model_id: str = "gemini-2.5-flash",
-        response_schema: Optional[Type[BaseModel]] = None
+        response_schema: Optional[Type[BaseModel]] = None,
+        thinking_budget: int = 0,
     ):
         self.name = name
         self.system_prompt = system_prompt
         self.model_id = model_id
         self.tools = tools or []
         self.response_schema = response_schema
+        self.thinking_budget = thinking_budget
 
         # Mapa nombre_función → callable para ejecutar las tools
         self._tool_map = {fn.__name__: fn for fn in self.tools}
@@ -78,7 +80,7 @@ class Agent:
             system_instruction=self.system_prompt,
             tools=self.tools if self.tools else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
+            thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
             response_mime_type="application/json" if self.response_schema else None,
             response_schema=self.response_schema if self.response_schema else None,
         )

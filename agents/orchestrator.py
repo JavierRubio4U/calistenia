@@ -40,7 +40,9 @@ class Orchestrator:
         self.user_email = user_email
         self.profile = profile
 
-        self.valeria = create_valeria_agent(profile=profile, user_email=user_email)
+        # Dos modos: rápido para conversación (sin thinking), completo para rutina/reporte
+        self.valeria_fast = create_valeria_agent(profile=profile, user_email=user_email, thinking_budget=0)
+        self.valeria_deep = create_valeria_agent(profile=profile, user_email=user_email, thinking_budget=8192)
         self.analyst = create_analyst_agent(profile=profile, user_email=user_email)
 
         # Historial de conversación por usuario: email → lista de types.Content
@@ -85,18 +87,21 @@ class Orchestrator:
         """
         t0 = time.time()
         # Solo prefetch si el mensaje lo requiere — conversación libre no necesita BD
-        if context or _needs_db(user_input):
+        needs_data = context or _needs_db(user_input)
+        if needs_data:
             data_ctx = self._full_context()
-            logger.info("[Orchestrator] Modo RUTINA/REPORTE — contexto BD cargado")
+            valeria = self.valeria_deep
+            logger.info("[Orchestrator] Modo RUTINA/REPORTE — thinking=8192, BD cargada")
         else:
             data_ctx = ""
-            logger.info("[Orchestrator] Modo CONVERSACIÓN — sin prefetch BD")
+            valeria = self.valeria_fast
+            logger.info("[Orchestrator] Modo CONVERSACIÓN — thinking=0, sin BD")
         t1 = time.time()
         full_ctx = (context + "\n" if context else "") + data_ctx
 
         current_history = self._history.get(self.user_email, [])
 
-        text, new_history = self.valeria.run(
+        text, new_history = valeria.run(
             user_input,
             context=full_ctx,
             history=current_history,

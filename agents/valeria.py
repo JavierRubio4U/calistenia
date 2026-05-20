@@ -126,7 +126,7 @@ Valeria, 20 años. Directa, simpática, sin rodeos. Frases cortas. Algún emoji 
 Responde en el idioma que use el usuario. Fecha de hoy: {today}"""
 
 
-def create_valeria_agent(profile: dict, user_email: str):
+def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 0):
     """Crea el agente Valeria unificado con todas las tools necesarias."""
     email = user_email
 
@@ -214,4 +214,5 @@ def create_valeria_agent(profile: dict, user_email: str):
         system_prompt=system_prompt,
         tools=tools,
         model_id="gemini-3.5-flash",
+        thinking_budget=thinking_budget,
     )
