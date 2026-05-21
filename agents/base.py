@@ -28,6 +28,17 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_CALLS = 10  # límite de seguridad para evitar loops infinitos
 MAX_RETRIES    = 4   # reintentos ante errores de red transitorios
 
+# Tools cuyo único efecto es escribir en BD (no devuelven datos útiles para razonar).
+# Si el modelo emite texto + una de estas, esa primera respuesta YA es la final:
+# no llamamos al modelo otra vez (evita el "ya te envié la rutina" confuso).
+WRITE_ONLY_TOOLS = {
+    "save_session",
+    "save_planned_workout",
+    "set_next_milestone",
+    "update_conditions",
+    "save_recommendation",
+}
+
 
 class Agent:
     """
@@ -227,6 +238,17 @@ class Agent:
 
                 # Añadir los resultados de las tools al historial
                 contents.append(types.Content(role="user", parts=tool_results))
+
+                # Shortcut: si TODOS los tool calls eran write-only Y el modelo ya emitió texto
+                # substantivo en este turno, esa respuesta YA es la final — no llamamos al modelo otra vez.
+                all_write_only = all(p.function_call.name in WRITE_ONLY_TOOLS for p in tool_calls)
+                if all_write_only and last_emitted_text and len(last_emitted_text.strip()) > 100:
+                    logger.info(
+                        f"[{self.name}] shortcut write-only: devolviendo texto previo ({len(last_emitted_text)} chars) sin segunda llamada al modelo"
+                    )
+                    if return_history:
+                        return last_emitted_text, contents
+                    return last_emitted_text
 
             error_msg = f"[Error] Se alcanzó el límite de {MAX_TOOL_CALLS} tool calls sin respuesta final."
             if return_history:
