@@ -105,7 +105,7 @@ class Agent:
 
         try:
             while call_count < MAX_TOOL_CALLS:
-                # Reintentos ante ConnectTimeout (red inestable desde Cloud Run)
+                # Reintentos ante errores de red transitorios (red inestable desde Cloud Run)
                 for attempt in range(MAX_RETRIES):
                     try:
                         response = self.client.models.generate_content(
@@ -114,8 +114,13 @@ class Agent:
                             config=config,
                         )
                         break  # éxito
-                    except (httpx.ConnectTimeout, httpx.RemoteProtocolError, httpx.ReadTimeout):
-                        if attempt < MAX_RETRIES - 1:
+                    except Exception as e:
+                        err_str = type(e).__name__.lower() + str(e).lower()
+                        is_retryable = any(w in err_str for w in [
+                            'timeout', 'remote', 'protocol', 'connection',
+                            'write', 'network', 'unavailable', 'reset', '503', '502',
+                        ])
+                        if is_retryable and attempt < MAX_RETRIES - 1:
                             time.sleep(2)
                         else:
                             raise

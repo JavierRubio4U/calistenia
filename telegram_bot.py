@@ -113,9 +113,19 @@ def _fix_bold(text: str) -> str:
 
 async def _send(update: Update, text: str):
     text = _fix_bold(text)
-    for i, chunk in enumerate([text[i:i+4000] for i in range(0, len(text), 4000)]):
-        kb = _keyboard() if i == (len(text) - 1) // 4000 else None
-        await update.message.reply_text(chunk, parse_mode="Markdown", reply_markup=kb)
+    chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+    chat_id = update.effective_chat.id
+    for i, chunk in enumerate(chunks):
+        kb = _keyboard() if i == len(chunks) - 1 else None
+        try:
+            await update.message.reply_text(chunk, parse_mode="Markdown", reply_markup=kb)
+        except Exception:
+            try:
+                # Fallback 1: sin Markdown (evita errores de parseo de Telegram)
+                await update.message.reply_text(chunk, parse_mode=None, reply_markup=kb)
+            except Exception:
+                # Fallback 2: send_message directo (evita problemas con reply stale)
+                await update.get_bot().send_message(chat_id=chat_id, text=chunk, reply_markup=kb)
 
 
 async def _typing_loop(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int):
