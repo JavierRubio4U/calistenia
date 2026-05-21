@@ -16,6 +16,7 @@ import random
 import logging
 import asyncio
 import tempfile
+import traceback
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -148,9 +149,15 @@ async def _run_with_typing(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, fn, *ar
 
 
 async def _send_error(update: Update, error: Exception):
-    """Envía mensaje de error sin Markdown para evitar problemas de parseo."""
-    msg = f"❌ Error: {type(error).__name__}"
-    await update.message.reply_text(msg, reply_markup=_keyboard())
+    """Envía mensaje de error sin Markdown para evitar problemas de parseo + loggea traceback completo."""
+    tb = traceback.format_exc()
+    logger.error(f"❌ TELEGRAM HANDLER ERROR\ntype={type(error).__name__}\nmsg={str(error)}\n{tb}")
+    # Mensaje al usuario: tipo + primeros 200 chars del mensaje (sin Markdown)
+    err_msg = f"❌ Error: {type(error).__name__}: {str(error)[:200]}"
+    try:
+        await update.message.reply_text(err_msg, reply_markup=_keyboard())
+    except Exception as send_e:
+        logger.error(f"❌ Fallo al enviar mensaje de error a Telegram: {send_e}")
 
 
 # ─── /start /menu ────────────────────────────────────────────────────────────

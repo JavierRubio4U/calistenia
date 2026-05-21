@@ -255,6 +255,6 @@ def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 
         name="Valeria",
         system_prompt=system_prompt,
         tools=tools,
-        model_id="gemini-3.1-pro-preview",
+        model_id="gemini-2.5-flash",
         thinking_budget=thinking_budget,
     )

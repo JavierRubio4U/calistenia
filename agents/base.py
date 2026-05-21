@@ -10,6 +10,8 @@ Implementa el bucle agéntico manualmente:
 
 import os
 import time
+import logging
+import traceback
 import httpx
 from typing import Any, Callable, List, Optional, Type, Union
 from pydantic import BaseModel
@@ -21,8 +23,10 @@ import httpx
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+logger = logging.getLogger(__name__)
+
 MAX_TOOL_CALLS = 10  # límite de seguridad para evitar loops infinitos
-MAX_RETRIES    = 3   # reintentos ante ConnectTimeout
+MAX_RETRIES    = 4   # reintentos ante errores de red transitorios
 
 
 class Agent:
@@ -73,6 +77,7 @@ class Agent:
             history: Lista de types.Content previos (conversación anterior).
             return_history: Si True, devuelve tupla (text, contents) con el historial completo.
         """
+        logger.info(f"[{self.name}] === RUN START === model={self.model_id} thinking_budget={self.thinking_budget} tools={len(self.tools)}")
         print(f"\n  [{self.name}] Procesando...")
 
         # Configuración base — AFC desactivado para bucle manual, thinking mínimo para velocidad
@@ -102,28 +107,50 @@ class Agent:
         )
 
         call_count = 0
+        last_emitted_text = ""  # último texto emitido junto a un tool call — fallback si tras la tool el modelo cierra con STOP vacío
 
         try:
             while call_count < MAX_TOOL_CALLS:
                 # Reintentos ante errores de red transitorios (red inestable desde Cloud Run)
+                response = None
+                last_exc = None
                 for attempt in range(MAX_RETRIES):
+                    t_call = time.time()
                     try:
+                        logger.info(f"[{self.name}] generate_content attempt={attempt+1}/{MAX_RETRIES} contents_len={len(contents)}")
                         response = self.client.models.generate_content(
                             model=self.model_id,
                             contents=contents,
                             config=config,
                         )
+                        logger.info(f"[{self.name}] generate_content OK in {time.time()-t_call:.2f}s on attempt {attempt+1}")
                         break  # éxito
                     except Exception as e:
+                        last_exc = e
                         err_str = type(e).__name__.lower() + str(e).lower()
                         is_retryable = any(w in err_str for w in [
                             'timeout', 'remote', 'protocol', 'connection',
                             'write', 'network', 'unavailable', 'reset', '503', '502',
                         ])
+                        logger.error(
+                            f"[{self.name}] generate_content FAIL attempt={attempt+1}/{MAX_RETRIES} "
+                            f"after {time.time()-t_call:.2f}s retryable={is_retryable} "
+                            f"type={type(e).__name__} msg={str(e)[:300]}\n{traceback.format_exc()}"
+                        )
                         if is_retryable and attempt < MAX_RETRIES - 1:
-                            time.sleep(2)
+                            # Recrear el cliente para soltar cualquier conexión HTTP/2 rota
+                            try:
+                                self._recreate_client()
+                                logger.info(f"[{self.name}] cliente recreado tras error retryable")
+                            except Exception as rec_e:
+                                logger.error(f"[{self.name}] fallo al recrear cliente: {rec_e}")
+                            backoff = 2 ** attempt  # 1, 2, 4
+                            time.sleep(backoff)
                         else:
                             raise
+                if response is None:
+                    # Defensivo: nunca debería pasar
+                    raise last_exc if last_exc else RuntimeError("generate_content devolvió None sin excepción")
 
                 # Obtener las partes de la respuesta del modelo
                 candidate = response.candidates[0]
@@ -145,8 +172,15 @@ class Agent:
                     if not text and text_parts:
                         text = "\n".join(p.text for p in text_parts)
                     if not text:
+                        # El modelo cerró sin texto. Si ya emitió texto en un turno previo (junto al tool call), úsalo.
                         finish = candidate.finish_reason if candidate else "UNKNOWN"
-                        raise ValueError(f"El modelo no generó respuesta (finish_reason={finish}). Puede que el modelo no esté disponible con esta API key.")
+                        if last_emitted_text:
+                            logger.warning(
+                                f"[{self.name}] respuesta final vacía (finish={finish}) — usando texto emitido previamente junto al tool call ({len(last_emitted_text)} chars)"
+                            )
+                            text = last_emitted_text
+                        else:
+                            raise ValueError(f"El modelo no generó respuesta (finish_reason={finish}). Puede que el modelo no esté disponible con esta API key.")
                     if return_history:
                         # Añadir respuesta final del modelo al historial antes de devolver
                         if content:
@@ -154,7 +188,14 @@ class Agent:
                         return text, contents
                     return text
 
-                # Hay tool calls: ejecutarlos todos y continuar
+                # Hay tool calls: ejecutarlos todos y continuar.
+                # Si el modelo ya emitió texto junto al tool call, guárdalo como fallback final.
+                if text_parts:
+                    emitted = "\n".join(p.text for p in text_parts if p.text)
+                    if emitted.strip():
+                        last_emitted_text = emitted
+                        logger.info(f"[{self.name}] texto emitido junto al tool call: {len(emitted)} chars")
+
                 print(f"  [{self.name}] Tool calls: {[p.function_call.name for p in tool_calls]}")
 
                 # Añadir la respuesta del modelo al historial
@@ -193,5 +234,17 @@ class Agent:
             return error_msg
 
         except Exception as e:
-            print(f"  [Error en {self.name}] {str(e)}")
+            tb = traceback.format_exc()
+            logger.error(f"[{self.name}] === RUN FAIL === type={type(e).__name__} msg={str(e)[:500]}\n{tb}")
+            print(f"  [Error en {self.name}] {type(e).__name__}: {str(e)}\n{tb}")
             raise e
+
+    def _recreate_client(self):
+        """Recrea el cliente Gemini para soltar conexiones HTTP/2 rotas tras un error de red."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        try:
+            import streamlit as st
+            api_key = st.secrets.get("GEMINI_API_KEY", api_key)
+        except Exception:
+            pass
+        self.client = genai.Client(api_key=api_key)
