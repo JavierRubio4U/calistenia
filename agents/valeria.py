@@ -12,26 +12,6 @@ from typing import List
 from .base import Agent
 import database as db
 
-SYSTEM_PROMPT_CHAT = """Eres Valeria, entrenadora personal de élite de {user_name}.
-
-═══ TU CLIENTE ═══
-- {user_name}, {age} años, {weight} kg.
-- Condiciones físicas: {injuries}.
-- Objetivo: {goals}.
-- Material en casa: {home_equipment}.
-
-═══ TU MODO AHORA ═══
-Estás en modo conversación: responde preguntas, aclara dudas, motiva, razona sobre entrenamiento, nutrición o recuperación.
-No generes rutinas ni registres sesiones aquí — eso se hace con los botones del menú.
-Si menciona una lesión nueva, limitación o quiere eliminar una → update_conditions con la lista completa actualizada.
-Formato obligatorio de cada condición: "Nombre (acción concreta)"
-  - Lesión/dolor → qué evitar: "Fascitis plantar (evitar impacto)"
-  - Limitación a mejorar → qué trabajar: "Mala flexibilidad de hombros (incluir estiramiento activo en cada sesión)"
-
-═══ PERSONALIDAD ═══
-Valeria, 20 años. Directa, simpática, sin rodeos. Frases cortas. Algún emoji pero sin pasarte.
-Responde en el idioma que use el usuario. Fecha de hoy: {today}"""
-
 SYSTEM_PROMPT_TEMPLATE = """Eres Valeria, entrenadora personal de élite de {user_name}.
 
 ═══ QUIÉN ES TU CLIENTE ═══
@@ -97,9 +77,7 @@ Si las últimas 3+ sesiones son todas de fuerza intensa, propón hoy una sesión
 Si no hay sesiones previas, genera una rutina de iniciación equilibrada: 2 patrones de fuerza + 1 de movilidad.
 
 ═══ CONDICIONES FÍSICAS ═══
-Para cada condición listada en el perfil actúa según su tipo — esto es obligatorio, no opcional:
-- Si la acción indica "evitar" → adapta o sustituye el ejercicio conflictivo (ej. fascitis: sin impacto, apoyos correctos + incluye 1 ejercicio de fortalecimiento/estiramiento específico como elevaciones de talón o estiramiento de gemelos).
-- Si la acción indica "incluir" → añade ese ejercicio a la lista de la sesión, siempre, sin excepción (ej. flexibilidad de hombros: incluye al menos 1 estiramiento activo de hombros y brazos en cada rutina).
+Para cada condición listada en el perfil, incluye al menos una acción concreta: un ejercicio que la trabaje o una adaptación que evite agravarla.
 
 FORMATO DE RUTINA:
 🎯 *Objetivo:* [next_milestone del perfil — si vacío: "Construir base sólida 💪"]
@@ -111,7 +89,7 @@ FORMATO DE RUTINA:
 🏋️ *Nombre* — NxM — Xs
 (N=series, M=reps o segundos de ejercicio, X=segundos de descanso entre series — SIEMPRE un valor real, nunca 0)
 
-[EXPLICACIONES - Solo si hay ejercicios que aparecen MENOS DE 3 VECES en las últimas 12 sesiones del historial (ejercicios poco familiares que aún se están aprendiendo), agrúpalos TODOS AL FINAL, debajo de la lista de ejercicios]
+[EXPLICACIONES - Solo si hay ejercicios NUEVOS que no aparecen en las últimas 10 sesiones del historial reciente, agrúpalos TODOS AL FINAL, debajo de la lista de ejercicios]
 📖 *Nombre*
 Qué es: [1 frase]
 Cómo: 1) … 2) … 3) …
@@ -140,10 +118,7 @@ Responde y razona. No guardes nada salvo que sea obvio.
 ════════════════════════════════════════════
 EN CUALQUIER CASO
 ════════════════════════════════════════════
-- Si menciona lesión nueva, limitación o quiere eliminar una → update_conditions con lista completa actualizada.
-  Formato obligatorio de cada condición: "Nombre (acción concreta)"
-  - Lesión/dolor → qué evitar: "Fascitis plantar (evitar impacto)"
-  - Limitación a mejorar → qué trabajar: "Mala flexibilidad de hombros (incluir estiramiento activo en cada sesión)"
+- Si menciona lesión nueva o quiere eliminar una → update_conditions con lista completa actualizada.
 - Si logró el objetivo actual (next_milestone) → felicítale efusivamente + llama set_next_milestone con el siguiente escalón lógico (alcanzable en 2-4 semanas, variado, concreto y medible). El usuario solo ve la felicitación, no la llamada técnica.
 
 ═══ PERSONALIDAD ═══
@@ -151,7 +126,7 @@ Valeria, 20 años. Directa, simpática, sin rodeos. Frases cortas. Algún emoji 
 Responde en el idioma que use el usuario. Fecha de hoy: {today}"""
 
 
-def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 0):
+def create_valeria_agent(profile: dict, user_email: str):
     """Crea el agente Valeria unificado con todas las tools necesarias."""
     email = user_email
 
@@ -214,7 +189,7 @@ def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 
         """Obtiene el perfil actual del usuario: nombre, peso, lesiones, objetivos."""
         return db.get_user_profile(user_email=email)
 
-    tools_deep = [
+    tools = [
         save_session,
         save_planned_workout,
         set_next_milestone,
@@ -222,39 +197,21 @@ def create_valeria_agent(profile: dict, user_email: str, thinking_budget: int = 
         get_recent_sessions,
         get_user_profile,
     ]
-    # Modo chat: solo update_conditions (por si menciona lesión) y lectura de perfil
-    tools_fast = [update_conditions, get_user_profile]
 
     user_name = profile.get("name", "Usuario")
-    common = dict(
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        user_name=user_name,
         age=profile.get("age", "?"),
         weight=profile.get("current_weight", "?"),
+        injuries=profile.get("injuries", ""),
+        goals=profile.get("goals", "Mejorar condición física"),
+        home_equipment=profile.get("home_equipment") or "No especificado",
         today=datetime.now().strftime("%Y-%m-%d"),
     )
-
-    if thinking_budget == 0:
-        system_prompt = SYSTEM_PROMPT_CHAT.format(
-            user_name=user_name,
-            injuries=profile.get("injuries", ""),
-            goals=profile.get("goals", "Mejorar condición física"),
-            home_equipment=profile.get("home_equipment") or "No especificado",
-            **common,
-        )
-        tools = tools_fast
-    else:
-        system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-            user_name=user_name,
-            injuries=profile.get("injuries", ""),
-            goals=profile.get("goals", "Mejorar condición física"),
-            home_equipment=profile.get("home_equipment") or "No especificado",
-            **common,
-        )
-        tools = tools_deep
 
     return Agent(
         name="Valeria",
         system_prompt=system_prompt,
         tools=tools,
         model_id="gemini-3.1-pro-preview",
-        thinking_budget=thinking_budget,
     )

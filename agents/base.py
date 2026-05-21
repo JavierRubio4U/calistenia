@@ -26,18 +26,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_CALLS = 10  # límite de seguridad para evitar loops infinitos
-MAX_RETRIES    = 4   # reintentos ante errores de red transitorios
-
-# Tools cuyo único efecto es escribir en BD (no devuelven datos útiles para razonar).
-# Si el modelo emite texto + una de estas, esa primera respuesta YA es la final:
-# no llamamos al modelo otra vez (evita el "ya te envié la rutina" confuso).
-WRITE_ONLY_TOOLS = {
-    "save_session",
-    "save_planned_workout",
-    "set_next_milestone",
-    "update_conditions",
-    "save_recommendation",
-}
+MAX_RETRIES    = 3   # reintentos ante errores de red transitorios
 
 
 class Agent:
@@ -51,15 +40,13 @@ class Agent:
         system_prompt: str,
         tools: Optional[List[Callable]] = None,
         model_id: str = "gemini-2.5-flash",
-        response_schema: Optional[Type[BaseModel]] = None,
-        thinking_budget: int = 0,
+        response_schema: Optional[Type[BaseModel]] = None
     ):
         self.name = name
         self.system_prompt = system_prompt
         self.model_id = model_id
         self.tools = tools or []
         self.response_schema = response_schema
-        self.thinking_budget = thinking_budget
 
         # Mapa nombre_función → callable para ejecutar las tools
         self._tool_map = {fn.__name__: fn for fn in self.tools}
@@ -70,7 +57,20 @@ class Agent:
             api_key = st.secrets.get("GEMINI_API_KEY", api_key)
         except Exception:
             pass
-        self.client = genai.Client(api_key=api_key)
+        self._api_key = api_key
+        self.client = self._build_client()
+
+    def _build_client(self):
+        """Crea un cliente Gemini con HTTP/1.1 forzado (evita LocalProtocolError 'state 5'
+        causado por reuso de streams HTTP/2 cerrados por Cloud Run/balancer)."""
+        # http_options.async_client_args / client_args llegan a httpx — desactivamos http2.
+        return genai.Client(
+            api_key=self._api_key,
+            http_options=types.HttpOptions(
+                client_args={"http2": False, "timeout": 120.0},
+                async_client_args={"http2": False, "timeout": 120.0},
+            ),
+        )
 
     def run(
         self,
@@ -88,15 +88,13 @@ class Agent:
             history: Lista de types.Content previos (conversación anterior).
             return_history: Si True, devuelve tupla (text, contents) con el historial completo.
         """
-        logger.info(f"[{self.name}] === RUN START === model={self.model_id} thinking_budget={self.thinking_budget} tools={len(self.tools)}")
         print(f"\n  [{self.name}] Procesando...")
 
-        # Configuración base — AFC desactivado para bucle manual, thinking mínimo para velocidad
+        # Configuración base — AFC y thinking desactivados para usar nuestro bucle manual
         config = types.GenerateContentConfig(
             system_instruction=self.system_prompt,
             tools=self.tools if self.tools else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            thinking_config=None,
             response_mime_type="application/json" if self.response_schema else None,
             response_schema=self.response_schema if self.response_schema else None,
         )
@@ -118,27 +116,21 @@ class Agent:
         )
 
         call_count = 0
-        last_emitted_text = ""  # último texto emitido junto a un tool call — fallback si tras la tool el modelo cierra con STOP vacío
 
         try:
             while call_count < MAX_TOOL_CALLS:
                 # Reintentos ante errores de red transitorios (red inestable desde Cloud Run)
-                response = None
-                last_exc = None
                 for attempt in range(MAX_RETRIES):
                     t_call = time.time()
                     try:
-                        logger.info(f"[{self.name}] generate_content attempt={attempt+1}/{MAX_RETRIES} contents_len={len(contents)}")
                         response = self.client.models.generate_content(
                             model=self.model_id,
                             contents=contents,
                             config=config,
                         )
-                        logger.info(f"[{self.name}] generate_content OK in {time.time()-t_call:.2f}s on attempt {attempt+1}")
                         break  # éxito
                     except Exception as e:
-                        last_exc = e
-                        err_str = type(e).__name__.lower() + str(e).lower()
+                        err_str = (type(e).__name__ + " " + str(e)).lower()
                         is_retryable = any(w in err_str for w in [
                             'timeout', 'remote', 'protocol', 'connection',
                             'write', 'network', 'unavailable', 'reset', '503', '502',
@@ -146,22 +138,17 @@ class Agent:
                         logger.error(
                             f"[{self.name}] generate_content FAIL attempt={attempt+1}/{MAX_RETRIES} "
                             f"after {time.time()-t_call:.2f}s retryable={is_retryable} "
-                            f"type={type(e).__name__} msg={str(e)[:300]}\n{traceback.format_exc()}"
+                            f"type={type(e).__name__} msg={str(e)[:300]}"
                         )
                         if is_retryable and attempt < MAX_RETRIES - 1:
-                            # Recrear el cliente para soltar cualquier conexión HTTP/2 rota
+                            # Recrear el cliente para soltar conexiones rotas
                             try:
-                                self._recreate_client()
-                                logger.info(f"[{self.name}] cliente recreado tras error retryable")
+                                self.client = self._build_client()
                             except Exception as rec_e:
                                 logger.error(f"[{self.name}] fallo al recrear cliente: {rec_e}")
-                            backoff = 2 ** attempt  # 1, 2, 4
-                            time.sleep(backoff)
+                            time.sleep(2 ** attempt)  # 1, 2, 4
                         else:
                             raise
-                if response is None:
-                    # Defensivo: nunca debería pasar
-                    raise last_exc if last_exc else RuntimeError("generate_content devolvió None sin excepción")
 
                 # Obtener las partes de la respuesta del modelo
                 candidate = response.candidates[0]
@@ -183,15 +170,8 @@ class Agent:
                     if not text and text_parts:
                         text = "\n".join(p.text for p in text_parts)
                     if not text:
-                        # El modelo cerró sin texto. Si ya emitió texto en un turno previo (junto al tool call), úsalo.
                         finish = candidate.finish_reason if candidate else "UNKNOWN"
-                        if last_emitted_text:
-                            logger.warning(
-                                f"[{self.name}] respuesta final vacía (finish={finish}) — usando texto emitido previamente junto al tool call ({len(last_emitted_text)} chars)"
-                            )
-                            text = last_emitted_text
-                        else:
-                            raise ValueError(f"El modelo no generó respuesta (finish_reason={finish}). Puede que el modelo no esté disponible con esta API key.")
+                        raise ValueError(f"El modelo no generó respuesta (finish_reason={finish}). Puede que el modelo no esté disponible con esta API key.")
                     if return_history:
                         # Añadir respuesta final del modelo al historial antes de devolver
                         if content:
@@ -199,14 +179,7 @@ class Agent:
                         return text, contents
                     return text
 
-                # Hay tool calls: ejecutarlos todos y continuar.
-                # Si el modelo ya emitió texto junto al tool call, guárdalo como fallback final.
-                if text_parts:
-                    emitted = "\n".join(p.text for p in text_parts if p.text)
-                    if emitted.strip():
-                        last_emitted_text = emitted
-                        logger.info(f"[{self.name}] texto emitido junto al tool call: {len(emitted)} chars")
-
+                # Hay tool calls: ejecutarlos todos y continuar
                 print(f"  [{self.name}] Tool calls: {[p.function_call.name for p in tool_calls]}")
 
                 # Añadir la respuesta del modelo al historial
@@ -239,17 +212,6 @@ class Agent:
                 # Añadir los resultados de las tools al historial
                 contents.append(types.Content(role="user", parts=tool_results))
 
-                # Shortcut: si TODOS los tool calls eran write-only Y el modelo ya emitió texto
-                # substantivo en este turno, esa respuesta YA es la final — no llamamos al modelo otra vez.
-                all_write_only = all(p.function_call.name in WRITE_ONLY_TOOLS for p in tool_calls)
-                if all_write_only and last_emitted_text and len(last_emitted_text.strip()) > 100:
-                    logger.info(
-                        f"[{self.name}] shortcut write-only: devolviendo texto previo ({len(last_emitted_text)} chars) sin segunda llamada al modelo"
-                    )
-                    if return_history:
-                        return last_emitted_text, contents
-                    return last_emitted_text
-
             error_msg = f"[Error] Se alcanzó el límite de {MAX_TOOL_CALLS} tool calls sin respuesta final."
             if return_history:
                 return error_msg, contents
@@ -258,15 +220,5 @@ class Agent:
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"[{self.name}] === RUN FAIL === type={type(e).__name__} msg={str(e)[:500]}\n{tb}")
-            print(f"  [Error en {self.name}] {type(e).__name__}: {str(e)}\n{tb}")
+            print(f"  [Error en {self.name}] {type(e).__name__}: {str(e)}")
             raise e
-
-    def _recreate_client(self):
-        """Recrea el cliente Gemini para soltar conexiones HTTP/2 rotas tras un error de red."""
-        api_key = os.getenv("GEMINI_API_KEY")
-        try:
-            import streamlit as st
-            api_key = st.secrets.get("GEMINI_API_KEY", api_key)
-        except Exception:
-            pass
-        self.client = genai.Client(api_key=api_key)

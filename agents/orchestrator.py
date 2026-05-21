@@ -9,9 +9,7 @@ Mantiene historial de conversación por usuario (máx 20 items).
 import json
 import time
 import logging
-import traceback
 from typing import Union, List, Optional
-from concurrent.futures import ThreadPoolExecutor
 from .valeria import create_valeria_agent
 from .analyst import create_analyst_agent
 import database as db
@@ -19,17 +17,6 @@ import database as db
 logger = logging.getLogger(__name__)
 
 _MAX_HISTORY = 20
-
-# Keywords que indican que el mensaje necesita datos de BD
-_RUTINA_KW  = {"rutina", "entreno", "parque", "casa", "minutos", "min", "ejercicio", "workout", "sesión", "sesion", "entrena"}
-_REPORTE_KW = {"hice", "hice todo", "realicé", "completé", "entrené", "series", "repeticiones", "reps", "terminé", "acabe", "acabé", "reporte"}
-
-def _needs_db(text: str) -> bool:
-    """Clasificación local sin LLM: ¿necesita datos de BD este mensaje?"""
-    if not isinstance(text, str):
-        return True  # multimodal → por si acaso
-    t = text.lower()
-    return any(w in t for w in _RUTINA_KW | _REPORTE_KW)
 
 
 class Orchestrator:
@@ -41,32 +28,32 @@ class Orchestrator:
         self.user_email = user_email
         self.profile = profile
 
-        # Dos modos: rápido para conversación (sin thinking), completo para rutina/reporte
-        self.valeria_fast = create_valeria_agent(profile=profile, user_email=user_email, thinking_budget=0)
-        self.valeria_deep = create_valeria_agent(profile=profile, user_email=user_email, thinking_budget=4096)
+        self.valeria = create_valeria_agent(profile=profile, user_email=user_email)
         self.analyst = create_analyst_agent(profile=profile, user_email=user_email)
 
         # Historial de conversación por usuario: email → lista de types.Content
         self._history: dict = {}
 
     def _full_context(self) -> str:
-        """Pre-fetcha TODOS los datos relevantes para Valeria en paralelo (~0.5s vs ~3-26s secuencial)."""
+        """Pre-fetcha TODOS los datos relevantes para Valeria, eliminando tool calls de lectura."""
         t0 = time.time()
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            f_profile    = ex.submit(db.get_user_profile,              user_email=self.user_email)
-            f_sessions   = ex.submit(db.get_recent_sessions, 12,       user_email=self.user_email)
-            f_week_freq  = ex.submit(db.get_week_frequency,            user_email=self.user_email)
-            f_days_since = ex.submit(db.get_days_since_last_session,   user_email=self.user_email)
-            f_recs       = ex.submit(db.get_recent_recommendations, 5, user_email=self.user_email)
-            f_planned    = ex.submit(db.get_planned_workout,           user_email=self.user_email)
-            profile    = f_profile.result()
-            sessions   = f_sessions.result()
-            week_freq  = f_week_freq.result()
-            days_since = f_days_since.result()
-            recs       = f_recs.result()
-            planned    = f_planned.result()
+        profile    = db.get_user_profile(user_email=self.user_email)
         t1 = time.time()
-        logger.info(f"[DB] parallel fetch TOTAL={t1-t0:.2f}s")
+        sessions   = db.get_recent_sessions(limit=12, user_email=self.user_email)
+        t2 = time.time()
+        week_freq  = db.get_week_frequency(user_email=self.user_email)
+        t3 = time.time()
+        days_since = db.get_days_since_last_session(user_email=self.user_email)
+        t4 = time.time()
+        recs       = db.get_recent_recommendations(limit=5, user_email=self.user_email)
+        t5 = time.time()
+        planned    = db.get_planned_workout(user_email=self.user_email)
+        t6 = time.time()
+        logger.info(
+            f"[DB] profile={t1-t0:.2f}s sessions={t2-t1:.2f}s week_freq={t3-t2:.2f}s "
+            f"days_since={t4-t3:.2f}s recs={t5-t4:.2f}s planned={t6-t5:.2f}s "
+            f"TOTAL_DB={t6-t0:.2f}s"
+        )
         return (
             "═══ DATOS PRE-CARGADOS ═══\n"
             f"PERFIL: {json.dumps(profile, ensure_ascii=False, default=str)}\n"
@@ -87,36 +74,20 @@ class Orchestrator:
             context: Contexto adicional (ej. lugar+tiempo para rutinas).
         """
         t0 = time.time()
-        # Solo prefetch si el mensaje lo requiere — conversación libre no necesita BD
-        needs_data = context or _needs_db(user_input)
-        if needs_data:
-            data_ctx = self._full_context()
-            valeria = self.valeria_deep
-            logger.info("[Orchestrator] Modo RUTINA/REPORTE — thinking=8192, BD cargada")
-        else:
-            data_ctx = ""
-            valeria = self.valeria_fast
-            logger.info("[Orchestrator] Modo CONVERSACIÓN — thinking=0, sin BD")
+        data_ctx = self._full_context()
         t1 = time.time()
         full_ctx = (context + "\n" if context else "") + data_ctx
 
         current_history = self._history.get(self.user_email, [])
 
-        logger.info(f"[Orchestrator] llamando a Valeria ({'deep' if needs_data else 'fast'}) ctx_len={len(full_ctx)} hist_len={len(current_history)}")
-        try:
-            text, new_history = valeria.run(
-                user_input,
-                context=full_ctx,
-                history=current_history,
-                return_history=True,
-            )
-        except Exception as e:
-            logger.error(
-                f"[Orchestrator] Valeria.run() falló — type={type(e).__name__} msg={str(e)[:300]}\n{traceback.format_exc()}"
-            )
-            raise
+        text, new_history = self.valeria.run(
+            user_input,
+            context=full_ctx,
+            history=current_history,
+            return_history=True,
+        )
         t2 = time.time()
-        logger.info(f"[Orchestrator] DB={t1-t0:.2f}s  Gemini={t2-t1:.2f}s  TOTAL={t2-t0:.2f}s  resp_len={len(text) if text else 0}")
+        logger.info(f"[Orchestrator] DB={t1-t0:.2f}s  Gemini={t2-t1:.2f}s  TOTAL={t2-t0:.2f}s")
 
         # Truncar historial a los últimos _MAX_HISTORY items
         self._history[self.user_email] = new_history[-_MAX_HISTORY:]
