@@ -1,5 +1,5 @@
 # === DEPENDENCIAS PRINCIPALES ===
-google-genai>=0.5.0         # SDK oficial de Google para Gemini
+google-genai==1.70.0        # SDK oficial de Google para Gemini (pinned — 2.x rompe ThinkingConfig)
 pydantic>=2.0.0             # Para schemas estructurados devueltos por LLM
 rich>=13.0.0                # Interfaz de usuario bonita en la terminal (CLI)
 python-dotenv>=1.0.0        # Cargar variables (.env)
