@@ -112,35 +112,124 @@ def _fix_bold(text: str) -> str:
     return re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
 
 
+def _split_by_paragraphs(text: str, max_chars: int = 900) -> list:
+    """Divide texto en chunks <= max_chars cortando en límites de párrafo (\\n\\n) o línea.
+    Mensajes pequeños → notificaciones de Telegram más fiables, mejor renderizado del cliente."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    current = ""
+
+    def _flush():
+        nonlocal current
+        if current.strip():
+            chunks.append(current.strip())
+        current = ""
+
+    for paragraph in text.split("\n\n"):
+        if not paragraph.strip():
+            continue
+        # ¿Cabe el párrafo entero?
+        candidate = (current + "\n\n" + paragraph) if current else paragraph
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        # No cabe → emitimos lo acumulado
+        _flush()
+        if len(paragraph) <= max_chars:
+            current = paragraph
+        else:
+            # Párrafo más largo que max_chars → partir por líneas
+            for line in paragraph.split("\n"):
+                cand2 = (current + "\n" + line) if current else line
+                if len(cand2) <= max_chars:
+                    current = cand2
+                else:
+                    _flush()
+                    current = line if len(line) <= max_chars else line[:max_chars]
+                    if len(line) > max_chars:
+                        # corte duro de una línea descomunal
+                        rest = line[max_chars:]
+                        while rest:
+                            _flush()
+                            current = rest[:max_chars]
+                            rest = rest[max_chars:]
+    _flush()
+    return chunks or [text[:max_chars]]
+
+
 async def _send(update: Update, text: str):
+    """Envía text como N mensajes pequeños (≤900 chars cada uno) por límites de párrafo.
+
+    Razón: Telegram a veces no renderiza mensajes largos hasta que algo despierta el cliente.
+    Mandar varios mensajes pequeños fuerza notificaciones independientes y renderizado fiable.
+    Usamos bot.send_message(chat_id=...) directo en lugar de reply_text (evita errores con
+    mensajes 'stale' tras 30+ segundos de procesamiento).
+    """
     text = _fix_bold(text)
-    chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+    chunks = _split_by_paragraphs(text, max_chars=900)
     chat_id = update.effective_chat.id
+    bot = update.get_bot()
+    logger.info(f"[SEND] enviando {len(chunks)} chunks (total {len(text)} chars) a chat={chat_id}")
+
     for i, chunk in enumerate(chunks):
-        kb = _keyboard() if i == len(chunks) - 1 else None
+        is_last = (i == len(chunks) - 1)
+        kb = _keyboard() if is_last else None
+        sent = False
+        # Intento 1: Markdown
         try:
-            await update.message.reply_text(chunk, parse_mode="Markdown", reply_markup=kb)
-        except Exception:
+            t0 = asyncio.get_event_loop().time()
+            await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="Markdown", reply_markup=kb)
+            logger.info(f"[SEND] chunk {i+1}/{len(chunks)} ({len(chunk)} chars) OK Markdown in {asyncio.get_event_loop().time()-t0:.2f}s")
+            sent = True
+        except Exception as e1:
+            logger.warning(f"[SEND] chunk {i+1} Markdown falló: {type(e1).__name__}: {str(e1)[:120]}")
+        # Intento 2: plain
+        if not sent:
             try:
-                # Fallback 1: sin Markdown (evita errores de parseo de Telegram)
-                await update.message.reply_text(chunk, parse_mode=None, reply_markup=kb)
-            except Exception:
-                # Fallback 2: send_message directo (evita problemas con reply stale)
-                await update.get_bot().send_message(chat_id=chat_id, text=chunk, reply_markup=kb)
+                await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=None, reply_markup=kb)
+                logger.info(f"[SEND] chunk {i+1}/{len(chunks)} OK plain")
+                sent = True
+            except Exception as e2:
+                logger.error(f"[SEND] chunk {i+1} plain también falló: {type(e2).__name__}: {str(e2)[:200]}")
+        # Pequeña pausa entre chunks para que el cliente procese cada uno
+        if sent and not is_last:
+            await asyncio.sleep(0.35)
+
+
+_HEARTBEAT_MSGS = [
+    "⏳ Sigo en ello...",
+    "🤔 Casi listo...",
+    "💭 Un poco más...",
+    "📝 Acabando los detalles...",
+]
 
 
 async def _typing_loop(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    """Manda 'typing' cada 4s mientras el LLM procesa para mantener el cliente en sync."""
+    """Manda 'typing' cada 4s + un mensaje real de heartbeat cada 25s.
+    El typing mantiene el indicador, el mensaje real fuerza notificación y despierta el cliente."""
+    elapsed = 0
+    heartbeat_idx = 0
     try:
         while True:
             await ctx.bot.send_chat_action(chat_id=chat_id, action="typing")
             await asyncio.sleep(4)
+            elapsed += 4
+            # Cada ~25s mandamos un mensaje real corto para forzar notificación y mantener el cliente vivo
+            if elapsed > 0 and elapsed % 24 == 0:
+                try:
+                    await ctx.bot.send_message(chat_id=chat_id, text=_HEARTBEAT_MSGS[heartbeat_idx % len(_HEARTBEAT_MSGS)])
+                    heartbeat_idx += 1
+                except Exception as e:
+                    logger.warning(f"[HEARTBEAT] fallo: {e}")
     except asyncio.CancelledError:
         pass
 
 
 async def _run_with_typing(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, fn, *args):
-    """Ejecuta fn(*args) en thread mientras manda typing al cliente de Telegram."""
+    """Ejecuta fn(*args) en thread mientras manda typing + heartbeats al cliente de Telegram."""
     task = asyncio.create_task(_typing_loop(ctx, chat_id))
     try:
         return await asyncio.to_thread(fn, *args)
