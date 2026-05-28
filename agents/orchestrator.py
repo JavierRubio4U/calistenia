@@ -19,6 +19,43 @@ logger = logging.getLogger(__name__)
 _MAX_HISTORY = 20
 
 
+def _truncate_history_safe(history: list, max_items: int) -> list:
+    """Trunca el historial dejando ~max_items items, pero garantizando que el primer
+    elemento sea un mensaje 'user' de texto normal (no function_response huérfano)
+    y que no se rompan parejas function_call → function_response.
+
+    Razón: Gemini rechaza con 400 INVALID_ARGUMENT si un function_response no va
+    inmediatamente después de su function_call, o si el historial empieza con un
+    function_response sin su function_call previo.
+    """
+    if len(history) <= max_items:
+        return list(history)
+
+    # Empezamos en max(0, len-max_items) y buscamos hacia adelante el primer punto
+    # de inicio "seguro": un mensaje user con texto y SIN function_response.
+    start = max(0, len(history) - max_items)
+    while start < len(history):
+        item = history[start]
+        role = getattr(item, "role", None)
+        parts = getattr(item, "parts", None) or []
+        if role == "user":
+            has_text = any(getattr(p, "text", None) for p in parts)
+            has_func_resp = any(getattr(p, "function_response", None) for p in parts)
+            if has_text and not has_func_resp:
+                break
+        start += 1
+
+    # Si no encontramos punto seguro (muy raro), descartar todo y empezar de cero
+    if start >= len(history):
+        logger.warning("[History] No se encontró punto de inicio seguro — reseteando historial")
+        return []
+
+    truncated = list(history[start:])
+    if start > 0:
+        logger.info(f"[History] truncado de {len(history)} a {len(truncated)} items (start_idx={start})")
+    return truncated
+
+
 class Orchestrator:
     """
     Coordina los agentes del sistema Calistenia Coach para un usuario concreto.
@@ -89,8 +126,8 @@ class Orchestrator:
         t2 = time.time()
         logger.info(f"[Orchestrator] DB={t1-t0:.2f}s  Gemini={t2-t1:.2f}s  TOTAL={t2-t0:.2f}s")
 
-        # Truncar historial a los últimos _MAX_HISTORY items
-        self._history[self.user_email] = new_history[-_MAX_HISTORY:]
+        # Truncar historial preservando integridad de pares function_call/function_response
+        self._history[self.user_email] = _truncate_history_safe(new_history, _MAX_HISTORY)
 
         return text
 
